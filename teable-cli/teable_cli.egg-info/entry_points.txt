@@ -1,0 +1,3 @@
+[console_scripts]
+t = teable_cli.cli:main
+teable = teable_cli.cli:main

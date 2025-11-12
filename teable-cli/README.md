@@ -1,0 +1,165 @@
+# Teable CLI
+
+一个类似Linux命令行的Teable数据库命令行界面工具。
+
+## 功能特性
+
+- 🎯 **类似Linux的命令体验** - 熟悉的命令如 `ls`, `use`, `show`
+- 🔧 **智能配置管理** - 自动保存连接信息和会话状态
+- 🎨 **彩色输出** - 美观的表格显示和数据展示
+- 💾 **会话保持** - 记住当前使用的表格
+- 🔄 **交互式模式** - 支持交互式命令行
+- 📊 **数据可视化** - 清晰的数据表格展示
+
+## 安装
+
+```bash
+# 克隆项目
+git clone <repository-url>
+cd teable-cli
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 安装CLI工具
+pip install -e .
+```
+
+## 快速开始
+
+### 1. 配置连接信息
+```bash
+# 配置Teable连接
+t config --token YOUR_TOKEN --base YOUR_BASE_ID
+
+# 可选：自定义服务地址
+t config --url https://app.teable.cn
+```
+
+### 2. 查看表格
+```bash
+# 列出所有表格
+t ls
+
+# 查看详细信息
+t ls -v
+```
+
+### 3. 选择表格
+```bash
+# 切换到学生表
+t use 学生表
+
+# 查看当前会话状态
+t status
+```
+
+### 4. 查看数据
+```bash
+# 显示当前表格数据
+t show
+
+# 进入交互式模式
+t -i
+```
+
+## 命令参考
+
+### 基础命令
+| 命令 | 描述 | 示例 |
+|------|------|------|
+| `ls` | 列出所有表格 | `t ls -v` |
+| `use` | 选择表格 | `t use 学生表` |
+| `show` | 显示当前表格数据 | `t show` |
+| `config` | 配置连接信息 | `t config --token TOKEN` |
+| `help` | 显示帮助信息 | `t help` |
+| `status` | 显示会话状态 | `t status` |
+
+### 配置选项
+```bash
+t config --token YOUR_TOKEN     # 设置认证令牌
+t config --base YOUR_BASE_ID    # 设置数据库ID
+t config --url SERVICE_URL      # 设置服务地址
+t config --reset                # 重置配置
+```
+
+## 交互式模式
+
+```bash
+# 启动交互式模式
+t -i
+
+# 或者在交互式环境中
+teable> ls
+teable> use 学生表
+teable> show
+teable> exit
+```
+
+## 配置文件
+
+配置文件保存在 `~/.teable/` 目录：
+- `config.json` - 连接配置（token不会保存到文件）
+- `session.json` - 会话信息
+- `history` - 命令历史
+
+## 示例会话
+
+```bash
+$ t config --token teable_xxxxx --base bsexxxxx
+配置已更新
+✅ 配置验证通过
+
+$ t ls
+可用表格:
+  学生表
+  班级表
+
+$ t use 学生表
+✅ 已切换到表格: 学生表
+   表格ID: tbld3at8IZbaHfgStlD
+
+$ t show
+┏━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━┓
+┃ 学号  ┃ 姓名  ┃ 年龄  ┃ 班级  ┃ 成绩  ┃
+┡━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━┩
+│ 2024001 │ 张三  │ 18    │ 计算机1班 │ 85    │
+│ 2024002 │ 李四  │ 19    │ 计算机1班 │ 92    │
+└───────┴───────┴───────┴───────┴───────┘
+
+📊 显示 2/8 条记录
+```
+
+## 开发
+
+### 项目结构
+```
+teable-cli/
+├── teable_cli/
+│   ├── __init__.py
+│   ├── cli.py              # 主CLI程序
+│   ├── config.py           # 配置管理
+│   ├── session.py          # 会话管理
+│   └── commands/           # 命令模块
+│       ├── __init__.py
+│       ├── base.py         # 基础命令
+│       ├── table.py        # 表格操作
+│       └── interactive.py  # 交互模式
+├── setup.py                # 安装脚本
+├── requirements.txt        # 依赖
+└── README.md              # 说明文档
+```
+
+### 添加新命令
+1. 在 `commands/` 目录创建新模块
+2. 实现命令函数
+3. 在 `cli.py` 中注册命令
+4. 更新帮助文档
+
+## 许可证
+
+MIT License
+
+## 贡献
+
+欢迎提交Issue和Pull Request！
