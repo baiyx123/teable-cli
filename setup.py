@@ -35,10 +35,11 @@ setup(
         "tabulate>=0.9.0",
         "rich>=12.0.0",
     ],
+    py_modules=["cli", "config", "session", "teable_api_client"],
     entry_points={
         "console_scripts": [
-            "t=teable_cli.cli:main",
-            "teable=teable_cli.cli:main",
+            "t=cli:main",
+            "teable=cli:main",
         ],
     },
 )
