@@ -59,10 +59,9 @@ def find_linked_record(client, foreign_table_id: str, identifier: str) -> Option
         if first_field:
             # 使用第一列字段进行模糊匹配
             records_data = client.get_records(foreign_table_id, filter=json.dumps({
-                "conjunction": "or",
+                "conjunction": "and",
                 "filterSet": [
-                    {"fieldId": first_field, "operator": "contains", "value": identifier},
-                    {"fieldId": "id", "operator": "is", "value": identifier}
+                    {"fieldId": first_field, "operator": "contains", "value": identifier}
                 ]
             }))
         else:
@@ -171,7 +170,7 @@ def list_tables(client, verbose: bool = False):
         return 1
 
 
-def process_link_field_value(client, field_name: str, field_value: str, link_fields: Dict[str, Dict[str, Any]]) -> Optional[str]:
+def process_link_field_value(client, field_name: str, field_value: str, link_fields: Dict[str, Dict[str, Any]], session=None) -> Optional[str]:
     """处理关联字段值，返回关联记录ID"""
     if field_name not in link_fields:
         return field_value
@@ -186,7 +185,82 @@ def process_link_field_value(client, field_name: str, field_value: str, link_fie
     
     if result is None:
         print(f"❌ 未找到匹配的关联记录: {field_value}")
-        return None
+        
+        # 询问用户是否要创建新记录
+        create_new = input("是否创建新的关联记录？(y/N): ").strip().lower()
+        if create_new not in ['y', 'yes', '是']:
+            return None
+        
+        # 如果有session，使用现有的插入功能
+        if session:
+            try:
+                # 获取关联表的名称
+                tables = client.get_tables()
+                foreign_table_name = None
+                for table in tables:
+                    if table.get('id') == foreign_table_id:
+                        foreign_table_name = table.get('name')
+                        break
+                
+                if not foreign_table_name:
+                    print("❌ 无法找到关联表名称")
+                    return None
+                
+                # 保存当前表格状态
+                original_table = session.get_current_table()
+                original_table_id = session.get_current_table_id()
+                
+                if not original_table or not original_table_id:
+                    print("❌ 无法保存当前表格状态")
+                    return None
+                
+                # 切换到关联表
+                print(f"\n切换到关联表 '{foreign_table_name}' 创建新记录...")
+                use_table(client, session, foreign_table_name)
+                
+                # 使用交互式模式插入记录
+                print(f"\n为关联表 '{foreign_table_name}' 创建新记录:")
+                insert_result, new_record_id = insert_record(client, session, [])
+                
+                # 无论成功与否，都要切换回原表格
+                try:
+                    if original_table and original_table_id:
+                        use_table(client, session, original_table)
+                        print(f"\n已切换回原表格: {original_table}")
+                except Exception as restore_error:
+                    print(f"⚠️  切换回原表格时出错: {restore_error}")
+                    # 尝试手动恢复session状态
+                    try:
+                        session.set_current_table(original_table, original_table_id)
+                    except:
+                        pass
+                
+                if insert_result == 0 and new_record_id:
+                    print(f"✅ 成功创建新关联记录，ID: {new_record_id}")
+                    return new_record_id
+                else:
+                    print("❌ 创建新记录失败")
+                    return None
+                    
+            except Exception as e:
+                print(f"❌ 创建新记录时出错: {e}")
+                # 确保切换回原表格
+                if original_table and original_table_id:
+                    try:
+                        use_table(client, session, original_table)
+                        print(f"\n已切换回原表格: {original_table}")
+                    except Exception as restore_error:
+                        print(f"⚠️  切换回原表格时出错: {restore_error}")
+                        # 尝试手动恢复session状态
+                        try:
+                            session.set_current_table(original_table, original_table_id)
+                        except:
+                            pass
+                return None
+        else:
+            # 没有session，使用简单的API调用
+            print("❌ 无法创建新记录：缺少会话信息")
+            return None
     
     if isinstance(result, list):
         # 多个匹配结果，需要交互式选择
@@ -215,7 +289,7 @@ def process_link_field_value(client, field_name: str, field_value: str, link_fie
 
 
 def insert_record(client, session, args: list):
-    """插入记录"""
+    """插入记录，返回(状态码, 记录ID)元组"""
     try:
         table_id = session.get_current_table_id()
         table_name = session.get_current_table()
@@ -239,9 +313,28 @@ def insert_record(client, session, args: list):
                 
                 # 特殊处理关联字段
                 if field_type == 'link':
-                    value = input(f"{field_name} (关联字段): ").strip()
+                    value = input(f"{field_name} (关联字段，直接回车跳过): ").strip()
                     if value:
-                        linked_record_id = process_link_field_value(client, field_name, value, link_fields)
+                        # 确保在处理关联字段前后，当前表格状态一致
+                        current_table_before = session.get_current_table()
+                        current_table_id_before = session.get_current_table_id()
+                        
+                        linked_record_id = process_link_field_value(client, field_name, value, link_fields, session)
+                        
+                        # 确保处理完关联字段后，恢复原表格状态
+                        current_table_after = session.get_current_table()
+                        current_table_id_after = session.get_current_table_id()
+                        if current_table_before and current_table_id_before:
+                            if current_table_after != current_table_before or current_table_id_after != current_table_id_before:
+                                # 状态不一致，尝试恢复
+                                try:
+                                    use_table(client, session, current_table_before)
+                                except:
+                                    try:
+                                        session.set_current_table(current_table_before, current_table_id_before)
+                                    except:
+                                        pass
+                        
                         if linked_record_id:
                             # 根据关联类型决定格式
                             relationship = link_fields[field_name].get('relationship', 'manyOne')
@@ -253,9 +346,11 @@ def insert_record(client, session, args: list):
                                 record_data[field_name] = {'id': linked_record_id}
                         else:
                             print(f"⚠️  跳过关联字段 '{field_name}'，未找到有效关联记录")
+                    # 无论是否输入值，都继续处理下一个字段
                     continue
                 
-                value = input(f"{field_name} ({field_type}): ").strip()
+                # 处理普通字段
+                value = input(f"{field_name} ({field_type}，直接回车跳过): ").strip()
                 if value:
                     # 根据字段类型转换值
                     if field_type in ['number', 'percent']:
@@ -272,7 +367,7 @@ def insert_record(client, session, args: list):
             
             if not record_data:
                 print("没有输入任何数据，取消插入")
-                return 0
+                return 0, None
         else:
             # 命令行参数模式
             # 格式: field1=value1 field2=value2
@@ -283,7 +378,7 @@ def insert_record(client, session, args: list):
                     
                     # 检查是否为关联字段
                     if field_name in link_fields:
-                        linked_record_id = process_link_field_value(client, field_name, value, link_fields)
+                        linked_record_id = process_link_field_value(client, field_name, value, link_fields, session)
                         if linked_record_id:
                             # 根据关联类型决定格式
                             relationship = link_fields[field_name].get('relationship', 'manyOne')
@@ -302,22 +397,23 @@ def insert_record(client, session, args: list):
         
         if not record_data:
             print("没有有效数据，取消插入")
-            return 0
+            return 0, None
         
         # 插入记录 - 使用正确的insert_records方法
         result = client.insert_records(table_id, [{'fields': record_data}])
         
         if result and 'records' in result:
             inserted_record = result['records'][0]
-            print(f"✅ 成功插入记录，ID: {inserted_record.get('id', 'N/A')}")
-            return 0
+            record_id = inserted_record.get('id')
+            print(f"✅ 成功插入记录，ID: {record_id}")
+            return 0, record_id
         else:
             print("❌ 插入记录失败")
-            return 1
+            return 1, None
             
     except Exception as e:
         print(f"错误: 插入记录失败: {e}")
-        return 1
+        return 1, None
 
 
 def update_record(client, session, args: list):
@@ -365,7 +461,7 @@ def update_record(client, session, args: list):
                 if field_type == 'link':
                     new_value = input(f"{field_name} (当前: {current_value}): ").strip()
                     if new_value and new_value != str(current_value):
-                        linked_record_id = process_link_field_value(client, field_name, new_value, link_fields)
+                        linked_record_id = process_link_field_value(client, field_name, new_value, link_fields, session)
                         if linked_record_id:
                             # 根据关联类型决定格式
                             relationship = link_fields[field_name].get('relationship', 'manyOne')
@@ -408,7 +504,7 @@ def update_record(client, session, args: list):
                     if field_name in field_names:
                         # 检查是否为关联字段
                         if field_name in link_fields:
-                            linked_record_id = process_link_field_value(client, field_name, value, link_fields)
+                            linked_record_id = process_link_field_value(client, field_name, value, link_fields, session)
                             if linked_record_id:
                                 # 关联字段需要使用 [{'id': record_id}] 格式（manyMany关系）
                                 update_data[field_name] = [{'id': linked_record_id}]
