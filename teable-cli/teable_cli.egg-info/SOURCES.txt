@@ -14,4 +14,5 @@ teable_cli.egg-info/top_level.txt
 teable_cli/commands/__init__.py
 teable_cli/commands/base.py
 teable_cli/commands/interactive.py
+teable_cli/commands/migrate.py
 teable_cli/commands/table.py

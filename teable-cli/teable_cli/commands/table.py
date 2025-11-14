@@ -6,13 +6,127 @@
 
 import sys
 import json
-from typing import Optional
+from typing import Optional, Dict, List, Any
 from tabulate import tabulate
 from rich.console import Console
 from rich.table import Table
 
 
 console = Console()
+
+
+def detect_link_fields(client, table_id: str) -> Dict[str, Dict[str, Any]]:
+    """检测表格中的关联字段，返回字段名称和外键表ID映射"""
+    fields = client.get_table_fields(table_id)
+    link_fields = {}
+    
+    for field in fields:
+        if field.get('type') == 'link':
+            field_name = field.get('name')
+            options = field.get('options', {})
+            link_fields[field_name] = {
+                'foreign_table_id': options.get('foreignTableId'),
+                'relationship': options.get('relationship')
+            }
+    
+    return link_fields
+
+
+def find_linked_record(client, foreign_table_id: str, identifier: str) -> Optional[Dict[str, Any]]:
+    """查找关联记录，支持精确匹配和模糊匹配"""
+    # 1. 尝试作为记录ID查询 - 直接使用get_record API
+    try:
+        record = client.get_record(foreign_table_id, identifier)
+        if record:
+            return record
+    except Exception as e:
+        # 如果按ID查询失败，继续尝试其他方式
+        pass
+    
+    # 2. 使用filter进行模糊查询 - 使用第一列字段进行匹配
+    # 先获取表格字段信息，找到第一个非系统字段
+    try:
+        fields = client.get_table_fields(foreign_table_id)
+        first_field = None
+        for field in fields:
+            field_name = field.get('name', '')
+            field_type = field.get('type', '')
+            # 跳过系统字段和关联字段
+            if field_name not in ['id', 'createdTime', 'updatedTime', 'createdBy', 'updatedBy'] and field_type != 'link':
+                first_field = field_name
+                break
+        
+        if first_field:
+            # 使用第一列字段进行模糊匹配
+            records_data = client.get_records(foreign_table_id, filter=json.dumps({
+                "conjunction": "or",
+                "filterSet": [
+                    {"fieldId": first_field, "operator": "contains", "value": identifier},
+                    {"fieldId": "id", "operator": "is", "value": identifier}
+                ]
+            }))
+        else:
+            # 如果没有合适的字段，只尝试ID匹配
+            records_data = client.get_records(foreign_table_id, filter=json.dumps({
+                "conjunction": "and",
+                "filterSet": [
+                    {"fieldId": "id", "operator": "is", "value": identifier}
+                ]
+            }))
+        
+        records = records_data.get('records', [])
+        if not records:
+            return None
+        elif len(records) == 1:
+            return records[0]
+        else:
+            # 多个结果，返回列表供交互选择
+            return records
+            
+    except Exception as e:
+        # 如果获取字段信息失败，返回None
+        return None
+
+
+def interactive_select_linked_record(records: List[Dict[str, Any]], field_name: str) -> Optional[Dict[str, Any]]:
+    """交互式选择关联记录"""
+    print(f"字段 '{field_name}' 找到多个匹配记录:")
+    for i, record in enumerate(records):
+        record_id = record.get('id', 'N/A')
+        # 尝试获取显示字段的值
+        fields = record.get('fields', {})
+        display_value = None
+        
+        # 优先使用常见显示字段
+        for display_field in ['name', 'title', 'label', 'display_name']:
+            if display_field in fields and fields[display_field]:
+                display_value = str(fields[display_field])
+                break
+        
+        # 如果没有找到显示字段，使用第一个非空字段
+        if not display_value:
+            for field_value in fields.values():
+                if field_value and str(field_value).strip():
+                    display_value = str(field_value)
+                    break
+        
+        if display_value:
+            print(f"  {i+1}. {display_value} (ID: {record_id})")
+        else:
+            print(f"  {i+1}. 记录ID: {record_id}")
+    
+    while True:
+        choice = input("请选择记录编号 (或输入0取消): ").strip()
+        if choice == '0':
+            return None
+        try:
+            idx = int(choice) - 1
+            if 0 <= idx < len(records):
+                return records[idx]
+            else:
+                print("无效的选择，请重试")
+        except ValueError:
+            print("请输入有效的数字")
 
 
 def list_tables(client, verbose: bool = False):
@@ -57,14 +171,58 @@ def list_tables(client, verbose: bool = False):
         return 1
 
 
+def process_link_field_value(client, field_name: str, field_value: str, link_fields: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """处理关联字段值，返回关联记录ID"""
+    if field_name not in link_fields:
+        return field_value
+    
+    link_info = link_fields[field_name]
+    foreign_table_id = link_info['foreign_table_id']
+    
+    print(f"正在查找关联字段 '{field_name}' 的目标记录: {field_value}")
+    
+    # 查找关联记录
+    result = find_linked_record(client, foreign_table_id, field_value)
+    
+    if result is None:
+        print(f"❌ 未找到匹配的关联记录: {field_value}")
+        return None
+    
+    if isinstance(result, list):
+        # 多个匹配结果，需要交互式选择
+        selected_record = interactive_select_linked_record(result, field_name)
+        if selected_record is None:
+            print("❌ 用户取消选择关联记录")
+            return None
+        result = selected_record
+    
+    # 返回关联记录的ID
+    linked_record_id = result.get('id')
+    if linked_record_id:
+        # 尝试获取显示值用于确认
+        fields = result.get('fields', {})
+        display_value = None
+        for display_field in ['name', 'title', 'label', 'display_name']:
+            if display_field in fields and fields[display_field]:
+                display_value = str(fields[display_field])
+                break
+        if display_value:
+            print(f"✅ 找到关联记录: {display_value} (ID: {linked_record_id})")
+        else:
+            print(f"✅ 找到关联记录，ID: {linked_record_id}")
+    
+    return linked_record_id
+
+
 def insert_record(client, session, args: list):
     """插入记录"""
     try:
         table_id = session.get_current_table_id()
         table_name = session.get_current_table()
         
-        # 获取字段信息
+        # 获取字段信息和关联字段
         fields = client.get_table_fields(table_id)
+        link_fields = detect_link_fields(client, table_id)
         
         if not args:
             # 交互式模式
@@ -77,6 +235,24 @@ def insert_record(client, session, args: list):
                 
                 # 跳过系统字段
                 if field_name in ['id', 'createdTime', 'updatedTime', 'createdBy', 'updatedBy']:
+                    continue
+                
+                # 特殊处理关联字段
+                if field_type == 'link':
+                    value = input(f"{field_name} (关联字段): ").strip()
+                    if value:
+                        linked_record_id = process_link_field_value(client, field_name, value, link_fields)
+                        if linked_record_id:
+                            # 根据关联类型决定格式
+                            relationship = link_fields[field_name].get('relationship', 'manyOne')
+                            if relationship in ['manyMany', 'oneMany']:
+                                # 多对多/一对多关系使用数组格式
+                                record_data[field_name] = [{'id': linked_record_id}]
+                            else:
+                                # 一对一/多对一关系使用对象格式
+                                record_data[field_name] = {'id': linked_record_id}
+                        else:
+                            print(f"⚠️  跳过关联字段 '{field_name}'，未找到有效关联记录")
                     continue
                 
                 value = input(f"{field_name} ({field_type}): ").strip()
@@ -104,13 +280,36 @@ def insert_record(client, session, args: list):
             for arg in args:
                 if '=' in arg:
                     field_name, value = arg.split('=', 1)
-                    record_data[field_name] = value
+                    
+                    # 检查是否为关联字段
+                    if field_name in link_fields:
+                        linked_record_id = process_link_field_value(client, field_name, value, link_fields)
+                        if linked_record_id:
+                            # 根据关联类型决定格式
+                            relationship = link_fields[field_name].get('relationship', 'manyOne')
+                            if relationship in ['manyMany', 'oneMany']:
+                                # 多对多/一对多关系使用数组格式
+                                record_data[field_name] = [{'id': linked_record_id}]
+                            else:
+                                # 一对一/多对一关系使用对象格式
+                                record_data[field_name] = {'id': linked_record_id}
+                        else:
+                            print(f"⚠️  跳过关联字段 '{field_name}'，未找到有效关联记录")
+                        continue
+                    else:
+                        # 普通字段，直接使用值
+                        record_data[field_name] = value
         
-        # 插入记录
-        result = client.create_record(table_id, record_data)
+        if not record_data:
+            print("没有有效数据，取消插入")
+            return 0
         
-        if result:
-            print(f"✅ 成功插入记录，ID: {result.get('id', 'N/A')}")
+        # 插入记录 - 使用正确的insert_records方法
+        result = client.insert_records(table_id, [{'fields': record_data}])
+        
+        if result and 'records' in result:
+            inserted_record = result['records'][0]
+            print(f"✅ 成功插入记录，ID: {inserted_record.get('id', 'N/A')}")
             return 0
         else:
             print("❌ 插入记录失败")
@@ -134,8 +333,9 @@ def update_record(client, session, args: list):
         
         record_id = args[0]
         
-        # 获取字段信息
+        # 获取字段信息和关联字段
         fields = client.get_table_fields(table_id)
+        link_fields = detect_link_fields(client, table_id)
         field_names = [f.get('name', '') for f in fields]
         
         if len(args) == 1:
@@ -153,17 +353,36 @@ def update_record(client, session, args: list):
             update_data = {}
             for field in fields:
                 field_name = field.get('name', '')
+                field_type = field.get('type', 'singleLineText')
                 
                 # 跳过系统字段
                 if field_name in ['id', 'createdTime', 'updatedTime', 'createdBy', 'updatedBy']:
                     continue
                 
                 current_value = current_fields.get(field_name, '')
+                
+                # 特殊处理关联字段
+                if field_type == 'link':
+                    new_value = input(f"{field_name} (当前: {current_value}): ").strip()
+                    if new_value and new_value != str(current_value):
+                        linked_record_id = process_link_field_value(client, field_name, new_value, link_fields)
+                        if linked_record_id:
+                            # 根据关联类型决定格式
+                            relationship = link_fields[field_name].get('relationship', 'manyOne')
+                            if relationship in ['manyMany', 'oneMany']:
+                                # 多对多/一对多关系使用数组格式
+                                update_data[field_name] = [{'id': linked_record_id}]
+                            else:
+                                # 一对一/多对一关系使用对象格式
+                                update_data[field_name] = {'id': linked_record_id}
+                        else:
+                            print(f"⚠️  跳过关联字段 '{field_name}'，未找到有效关联记录")
+                    continue
+                
                 new_value = input(f"{field_name} (当前: {current_value}): ").strip()
                 
                 if new_value and new_value != str(current_value):
                     # 根据字段类型转换值
-                    field_type = field.get('type', 'singleLineText')
                     if field_type in ['number', 'percent']:
                         try:
                             new_value = float(new_value)
@@ -187,7 +406,17 @@ def update_record(client, session, args: list):
                 if '=' in arg:
                     field_name, value = arg.split('=', 1)
                     if field_name in field_names:
-                        update_data[field_name] = value
+                        # 检查是否为关联字段
+                        if field_name in link_fields:
+                            linked_record_id = process_link_field_value(client, field_name, value, link_fields)
+                            if linked_record_id:
+                                # 关联字段需要使用 [{'id': record_id}] 格式（manyMany关系）
+                                update_data[field_name] = [{'id': linked_record_id}]
+                            else:
+                                print(f"⚠️  跳过关联字段 '{field_name}'，未找到有效关联记录")
+                        else:
+                            # 普通字段，直接使用值
+                            update_data[field_name] = value
                     else:
                         print(f"警告: 字段 '{field_name}' 不存在，跳过")
         
@@ -195,8 +424,15 @@ def update_record(client, session, args: list):
             print("没有数据需要更新")
             return 0
         
-        # 更新记录
-        result = client.update_record(table_id, record_id, update_data)
+        # 检查是否有关联字段需要特殊处理
+        has_link_fields = any(field_name in link_fields for field_name in update_data.keys())
+        
+        if has_link_fields:
+            # 使用字段ID模式更新关联字段
+            result = client.update_record(table_id, record_id, update_data, use_field_ids=False)
+        else:
+            # 普通更新
+            result = client.update_record(table_id, record_id, update_data)
         
         if result:
             print(f"✅ 成功更新记录 {record_id}")
@@ -357,12 +593,14 @@ def show_current_table(client, session, args: list):
                 # 先检查比较操作符（优先级高于等于）
                 elif '>=' in condition:
                     field_name, value = condition.split('>=', 1)
-                    field_id = field_name_to_id.get(field_name, field_name)
-                    where_conditions[f"{field_id}__gte"] = value
+                    field_name = field_name.strip()
+                    value = value.strip()
+                    where_conditions[f"{field_name}__gte"] = value
                 elif '<=' in condition:
                     field_name, value = condition.split('<=', 1)
-                    field_id = field_name_to_id.get(field_name, field_name)
-                    where_conditions[f"{field_id}__lte"] = value
+                    field_name = field_name.strip()
+                    value = value.strip()
+                    where_conditions[f"{field_name}__lte"] = value
                 elif '>' in condition:
                     field_name, value = condition.split('>', 1)
                     where_conditions[f"{field_name}__gt"] = value

@@ -400,6 +400,25 @@ class TeableClient:
         endpoint = f"/base/{self.base_id}/table"
         return self._request("GET", endpoint)
 
+    def get_record(self, table_id: str, record_id: str) -> Optional[Dict[str, Any]]:
+        """
+        获取单条记录详情
+        
+        Args:
+            table_id: 表格ID
+            record_id: 记录ID
+            
+        Returns:
+            记录详情，如果未找到返回None
+        """
+        logger.info(f"获取表格 {table_id} 的记录 {record_id}")
+        endpoint = f"/table/{table_id}/record/{record_id}"
+        try:
+            return self._request("GET", endpoint)
+        except Exception as e:
+            logger.error(f"获取记录失败: {e}")
+            return None
+
     def delete_field(self, table_id: str, field_id: str) -> bool:
         """
         删除字段
