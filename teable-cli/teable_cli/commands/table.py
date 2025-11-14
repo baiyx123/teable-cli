@@ -392,7 +392,27 @@ def insert_record(client, session, args: list):
                             print(f"⚠️  跳过关联字段 '{field_name}'，未找到有效关联记录")
                         continue
                     else:
-                        # 普通字段，直接使用值
+                        # 普通字段，需要根据字段类型转换值
+                        # 查找字段类型
+                        field_type = None
+                        for field in fields:
+                            if field.get('name') == field_name:
+                                field_type = field.get('type', 'singleLineText')
+                                break
+                        
+                        # 根据字段类型转换值
+                        if field_type in ['number', 'percent']:
+                            try:
+                                value = float(value)
+                            except ValueError:
+                                print(f"警告: {field_name} 需要数字，跳过该字段")
+                                continue
+                        elif field_type == 'checkbox':
+                            value = value.lower() in ['true', '1', 'yes', '是']
+                        elif field_type == 'multipleSelect':
+                            value = [v.strip() for v in value.split(',')]
+                        # date类型保持字符串格式，由API处理
+                        
                         record_data[field_name] = value
         
         if not record_data:
