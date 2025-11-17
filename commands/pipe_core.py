@@ -22,7 +22,11 @@ def is_pipe_output() -> bool:
 
 
 def has_pipe_input_data(timeout: float = 0.1) -> bool:
-    """检测标准输入是否有数据可读"""
+    """检测标准输入是否有数据可读
+    
+    注意：在非交互式环境中（如脚本），即使 stdin 不是 tty，
+    也不意味着一定有管道数据。需要实际检查是否有数据可读。
+    """
     if not is_pipe_input():
         return False
     
