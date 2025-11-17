@@ -39,8 +39,15 @@ Teable CLI - 命令行界面工具
   t show -w 年龄>18 -o 成绩:desc -l 10  # 查询条件、排序、限制
   t insert                # 交互式插入记录
   t insert 姓名=张三 年龄=20  # 直接插入记录
-  t update rec123 姓名=李四  # 更新记录
+  t update rec123 姓名=李四  # 更新单条记录
+  t update 状态=已完成 where 优先级=高  # 条件更新多条记录
   t delete rec123          # 删除记录
+
+管道操作（新功能）:
+  t show -w 状态=待处理 | t update 状态=处理中     # 查询并更新
+  t show -w 优先级=高 | head -10 | t update 处理人=张三  # 查询前10条并更新
+  t show -w 状态=已取消 | t delete                    # 查询并删除
+  t show -w 状态=已完成 | t insert --to-table 备份表    # 数据复制
 
 示例:
   # 配置连接
@@ -60,10 +67,19 @@ Teable CLI - 命令行界面工具
   t insert 姓名=张三 年龄=20 性别=男
   
   # 更新数据
-  t update rec123 姓名=李四 年龄=21
+  t update rec123 姓名=李四 年龄=21                    # 更新单条记录
+  t update 状态=已完成 where 优先级=高               # 条件更新多条记录
+  t update 状态=处理中 处理人=张三 where 创建时间>2024-01-01 优先级>=中
+  t update 备注=已处理 where 标题like重要              # 模糊匹配条件更新
+  
+  # 管道操作（零配置，智能识别）
+  t show -w 状态=待处理 | t update 状态=处理中        # 查询并更新
+  t show -w 优先级=高 | head -10 | t update 处理人=张三  # 查询前10条并更新
+  t show -w 创建时间>2024-01-01 | grep '客户=重要客户' | t update 优先级=最高
   
   # 删除数据
   t delete rec123
+  t show -w 状态=已取消 | t delete                    # 批量删除查询结果
 
 更多信息:
   使用 't help' 显示此帮助信息
