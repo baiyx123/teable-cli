@@ -1890,7 +1890,7 @@ def use_table(client, session, table_name: str):
 
 
 def show_current_table(client, session, args: list):
-    """显示当前表格数据 - 支持智能管道操作"""
+    """显示当前表格数据 - 支持智能管道操作和关联查询"""
     if not client:
         print("错误: 无法连接到Teable服务")
         return 1
@@ -1903,6 +1903,13 @@ def show_current_table(client, session, args: list):
         table_id = session.get_current_table_id()
         table_name = session.get_current_table()
         
+        # 检测是否有管道输入（关联查询模式）
+        from .pipe_core import is_pipe_input, has_pipe_input_data, parse_pipe_input_line
+        
+        if is_pipe_input() and has_pipe_input_data():
+            # 管道输入模式：关联查询
+            return show_pipe_input_mode(client, session, args, table_id, table_name)
+        
         # 检测是否为管道输出模式
         if is_pipe_output():
             return show_pipe_mode(client, session, args, table_id, table_name)
@@ -1912,7 +1919,265 @@ def show_current_table(client, session, args: list):
         
     except Exception as e:
         print(f"错误: 显示表格数据失败: {e}")
+        logger.error(f"显示表格数据失败: {e}", exc_info=True)
         return 1
+
+
+def show_pipe_input_mode(client, session, args: list, table_id: str, table_name: str):
+    """管道输入模式的show命令 - 关联查询，根据管道记录中的值查询当前表"""
+    try:
+        from .pipe_core import parse_pipe_input_line, format_record_for_pipe
+        
+        print(f"正在从管道读取记录进行关联查询...")
+        
+        # 解析查询条件参数，支持@字段名语法
+        where_conditions = {}
+        limit = None
+        order_by = None
+        order_direction = 'asc'
+        
+        # 获取字段信息
+        fields = client.get_table_fields(table_id)
+        
+        # 解析参数
+        for arg in args:
+            if arg.startswith('limit='):
+                try:
+                    limit = int(arg.split('=', 1)[1])
+                except ValueError:
+                    pass
+            elif arg.startswith('order='):
+                order_spec = arg.split('=', 1)[1]
+                if ':' in order_spec:
+                    order_by_name, order_direction = order_spec.split(':', 1)
+                    order_direction = order_direction.lower()
+                    if order_direction not in ['asc', 'desc']:
+                        order_direction = 'asc'
+                    order_by = order_by_name
+                else:
+                    order_by = order_spec
+            else:
+                # 处理where条件，支持@字段名语法
+                condition = arg
+                if 'like' in condition:
+                    field_name, value = condition.split('like', 1)
+                    field_name = field_name.strip()
+                    value = value.strip()
+                    if value.startswith('@') or value.startswith('$'):
+                        where_conditions[f"{field_name}__like"] = {
+                            'type': 'field_mapping',
+                            'source_field': value[1:]
+                        }
+                    else:
+                        where_conditions[f"{field_name}__like"] = {
+                            'type': 'constant',
+                            'value': value
+                        }
+                elif '>=' in condition:
+                    field_name, value = condition.split('>=', 1)
+                    field_name = field_name.strip()
+                    value = value.strip()
+                    if value.startswith('@') or value.startswith('$'):
+                        where_conditions[f"{field_name}__gte"] = {
+                            'type': 'field_mapping',
+                            'source_field': value[1:]
+                        }
+                    else:
+                        where_conditions[f"{field_name}__gte"] = {
+                            'type': 'constant',
+                            'value': value
+                        }
+                elif '<=' in condition:
+                    field_name, value = condition.split('<=', 1)
+                    field_name = field_name.strip()
+                    value = value.strip()
+                    if value.startswith('@') or value.startswith('$'):
+                        where_conditions[f"{field_name}__lte"] = {
+                            'type': 'field_mapping',
+                            'source_field': value[1:]
+                        }
+                    else:
+                        where_conditions[f"{field_name}__lte"] = {
+                            'type': 'constant',
+                            'value': value
+                        }
+                elif '>' in condition and not condition.startswith('>'):
+                    field_name, value = condition.split('>', 1)
+                    field_name = field_name.strip()
+                    value = value.strip()
+                    if value.startswith('@') or value.startswith('$'):
+                        where_conditions[f"{field_name}__gt"] = {
+                            'type': 'field_mapping',
+                            'source_field': value[1:]
+                        }
+                    else:
+                        where_conditions[f"{field_name}__gt"] = {
+                            'type': 'constant',
+                            'value': value
+                        }
+                elif '<' in condition and not condition.startswith('<'):
+                    field_name, value = condition.split('<', 1)
+                    field_name = field_name.strip()
+                    value = value.strip()
+                    if value.startswith('@') or value.startswith('$'):
+                        where_conditions[f"{field_name}__lt"] = {
+                            'type': 'field_mapping',
+                            'source_field': value[1:]
+                        }
+                    else:
+                        where_conditions[f"{field_name}__lt"] = {
+                            'type': 'constant',
+                            'value': value
+                        }
+                elif '=' in condition:
+                    field_name, value = condition.split('=', 1)
+                    field_name = field_name.strip()
+                    value = value.strip()
+                    if value.startswith('@') or value.startswith('$'):
+                        where_conditions[f"{field_name}__eq"] = {
+                            'type': 'field_mapping',
+                            'source_field': value[1:]
+                        }
+                    else:
+                        where_conditions[f"{field_name}__eq"] = {
+                            'type': 'constant',
+                            'value': value
+                        }
+        
+        if not where_conditions:
+            print("错误: 关联查询模式下必须指定where条件（使用@字段名从管道记录中获取值）")
+            print("示例: t show 订单表 | t show 客户表 where 客户ID=@订单客户ID")
+            return 1
+        
+        # 流式处理：对于每条管道记录，查询匹配的记录
+        total_processed = 0
+        total_found = 0
+        
+        print(f"开始关联查询处理...")
+        
+        # 从管道流式读取记录
+        try:
+            for line in sys.stdin:
+                pipe_record = parse_pipe_input_line(line)
+                if pipe_record:
+                    # 对于每条管道记录，构建查询条件并查询匹配的记录
+                    found_count = _process_show_pipe_input(client, table_id, pipe_record, 
+                                                          where_conditions, fields, limit, 
+                                                          order_by, order_direction)
+                    total_processed += 1
+                    total_found += found_count
+                    
+                    if total_processed % 50 == 0:
+                        logger.info(f"关联查询进度: 已处理 {total_processed} 条管道记录，找到 {total_found} 条匹配记录")
+        
+        except KeyboardInterrupt:
+            print(f"\n用户中断，正在处理剩余记录...")
+        
+        if total_processed > 0:
+            logger.info(f"关联查询完成，共处理 {total_processed} 条管道记录，找到 {total_found} 条匹配记录")
+            return 0
+        else:
+            print("错误: 没有从管道接收到有效的记录数据")
+            return 1
+            
+    except Exception as e:
+        print(f"错误: 关联查询模式失败: {e}")
+        logger.error(f"关联查询模式失败: {e}", exc_info=True)
+        return 1
+
+
+def _process_show_pipe_input(client, table_id: str, pipe_record: Dict[str, Any],
+                            where_conditions: Dict[str, Dict[str, Any]], 
+                            fields: List[Dict[str, Any]], limit: Optional[int],
+                            order_by: Optional[str], order_direction: str) -> int:
+    """处理关联查询：根据管道记录中的值查询匹配的记录"""
+    try:
+        pipe_fields = pipe_record.get('fields', {})
+        
+        # 构建查询条件（使用管道记录中的值替换@字段名）
+        filter_set = []
+        for condition_key, condition_info in where_conditions.items():
+            # 解析条件键，获取字段名和操作符
+            field_name = condition_key
+            operator = "is"
+            
+            if condition_key.endswith('__eq'):
+                field_name = condition_key.replace('__eq', '')
+                operator = "is"
+            elif condition_key.endswith('__gt'):
+                field_name = condition_key.replace('__gt', '')
+                operator = "isGreater"
+            elif condition_key.endswith('__gte'):
+                field_name = condition_key.replace('__gte', '')
+                operator = "isGreaterEqual"
+            elif condition_key.endswith('__lt'):
+                field_name = condition_key.replace('__lt', '')
+                operator = "isLess"
+            elif condition_key.endswith('__lte'):
+                field_name = condition_key.replace('__lte', '')
+                operator = "isLessEqual"
+            elif condition_key.endswith('__like'):
+                field_name = condition_key.replace('__like', '')
+                operator = "contains"
+            
+            # 确定条件值
+            if condition_info['type'] == 'field_mapping':
+                source_field = condition_info['source_field']
+                if source_field in pipe_fields:
+                    condition_value = pipe_fields[source_field]
+                else:
+                    logger.warning(f"管道记录中不存在字段 '{source_field}'，跳过条件 '{field_name}'")
+                    continue
+            else:
+                condition_value = condition_info['value']
+            
+            # 构建过滤条件
+            filter_set.append({
+                "fieldId": field_name,
+                "operator": operator,
+                "value": condition_value
+            })
+        
+        if not filter_set:
+            logger.warning("没有有效的查询条件，跳过")
+            return 0
+        
+        # 构建查询参数
+        query_params = {
+            'filter': json.dumps({
+                "conjunction": "and",
+                "filterSet": filter_set
+            }),
+            'take': limit if limit else 1000,  # 限制每次最多查询1000条
+            'skip': 0
+        }
+        
+        # 添加排序参数
+        if order_by:
+            order_config = [{
+                "fieldId": order_by,
+                "order": order_direction
+            }]
+            query_params['orderBy'] = json.dumps(order_config)
+        
+        # 查询匹配的记录
+        records_data = client.get_records(table_id, **query_params)
+        matched_records = records_data.get('records', [])
+        
+        if not matched_records:
+            logger.debug(f"没有找到匹配的记录，跳过")
+            return 0
+        
+        # 输出匹配的记录（管道格式）
+        for record in matched_records:
+            output_line = format_record_for_pipe(record)
+            print(output_line, flush=True)
+        
+        return len(matched_records)
+        
+    except Exception as e:
+        logger.error(f"关联查询处理失败: {e}", exc_info=True)
+        return 0
 
 
 def show_pipe_mode(client, session, args: list, table_id: str, table_name: str):
