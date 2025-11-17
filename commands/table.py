@@ -630,7 +630,13 @@ def insert_record(client, session, args: list):
 def insert_pipe_mode(client, session, table_id: str, table_name: str, args: list):
     """管道模式的insert命令 - 从管道流式读取记录并批量插入"""
     try:
-        print(f"正在从管道流式读取记录进行批量插入...")
+        # 检测是否有管道输出（链式管道操作）
+        from .pipe_core import is_pipe_output
+        
+        if is_pipe_output():
+            print(f"正在从管道流式读取记录进行批量插入（链式管道模式）...")
+        else:
+            print(f"正在从管道流式读取记录进行批量插入...")
         
         # 确保导入解析函数
         from .pipe_core import parse_pipe_input_line
@@ -838,6 +844,13 @@ def _process_insert_batch(client, table_id: str, batch_records: List[Dict[str, A
                 inserted_count = len(result['records'])
                 batch_success += inserted_count
                 logger.info(f"成功插入批次: {inserted_count} 条记录 (累计: {progress_count})")
+                
+                # 如果有管道输出，输出插入的记录（链式管道操作）
+                from .pipe_core import is_pipe_output, format_record_for_pipe
+                if is_pipe_output():
+                    for inserted_record in result['records']:
+                        output_line = format_record_for_pipe(inserted_record)
+                        print(output_line, flush=True)
             else:
                 logger.warning(f"批次插入失败: {len(insert_records)} 条记录")
                 batch_errors += len(insert_records)
@@ -1237,7 +1250,10 @@ def _process_update_batch_direct(client, table_id: str, batch_records: List[Dict
                                  has_link_fields: bool, progress_count: int):
     """处理直接更新模式的批次"""
     try:
+        from .pipe_core import is_pipe_output, format_record_for_pipe
+        
         updates = []
+        updated_record_ids = []  # 记录更新的记录ID，用于管道输出
         field_info_map = {f.get('name'): f for f in fields}
         
         for record in batch_records:
@@ -1285,6 +1301,7 @@ def _process_update_batch_direct(client, table_id: str, batch_records: List[Dict
                     'record_id': record_id,
                     'fields_data': fields_data
                 })
+                updated_record_ids.append(record_id)
         
         # 执行批量更新
         if updates:
@@ -1295,6 +1312,33 @@ def _process_update_batch_direct(client, table_id: str, batch_records: List[Dict
             
             if result:
                 logger.info(f"成功更新批次: {len(updates)} 条记录 (累计: {progress_count})")
+                
+                # 如果有管道输出，输出更新的记录（链式管道操作）
+                if is_pipe_output() and updated_record_ids:
+                    # 使用 filter 查询更新后的记录
+                    # 构建 ID 过滤条件（使用 OR 连接多个 ID）
+                    filter_set = []
+                    for record_id in updated_record_ids:
+                        filter_set.append({
+                            "fieldId": "id",
+                            "operator": "is",
+                            "value": record_id
+                        })
+                    
+                    if filter_set:
+                        query_params = {
+                            'filter': json.dumps({
+                                "conjunction": "or",
+                                "filterSet": filter_set
+                            }),
+                            'take': len(updated_record_ids),
+                            'skip': 0
+                        }
+                        updated_records = client.get_records(table_id, **query_params)
+                        if updated_records and 'records' in updated_records:
+                            for updated_record in updated_records['records']:
+                                output_line = format_record_for_pipe(updated_record)
+                                print(output_line, flush=True)
             else:
                 logger.warning(f"批次更新失败: {len(updates)} 条记录")
             
