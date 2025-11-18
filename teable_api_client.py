@@ -66,8 +66,12 @@ class TeableClient:
             if response.status_code == 204:
                 return {}
             
-            # 检查响应内容
-            if not response.text.strip():
+            # 对于 DELETE 操作，204 或空响应都是正常的
+            if method == "DELETE" and not response.text.strip():
+                return {}
+            
+            # 检查响应内容（DELETE 操作除外）
+            if method != "DELETE" and not response.text.strip():
                 logger.error(f"响应为空: {url}")
                 raise Exception("响应为空")
             
@@ -403,13 +407,8 @@ class TeableClient:
         logger.info(f"删除表格: {table_id}")
         endpoint = f"/base/{self.base_id}/table/{table_id}"
         try:
-            # 删除操作可能返回空响应，直接检查状态码
-            response = requests.delete(
-                f"{self.base_url}{endpoint}",
-                headers=self.headers,
-                timeout=30
-            )
-            response.raise_for_status()
+            # 使用 _request 方法统一处理API调用
+            self._request("DELETE", endpoint)
             return True
         except Exception as e:
             logger.error(f"删除表格失败: {e}")

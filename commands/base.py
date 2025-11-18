@@ -26,6 +26,7 @@ Teable CLI - 命令行界面工具
   delete    删除记录
   create    创建新表格
   alter     修改表格结构（添加字段等）
+  drop      删除表格（需要确认）
   desc      显示表格结构（字段列表）
   schema    显示表格结构（同 desc）
   fields    显示表格结构（同 desc）

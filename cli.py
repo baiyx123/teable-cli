@@ -74,6 +74,7 @@ class TeableCLI:
             'version': self._handle_version,
             'alter': self._handle_alter,
             'create': self._handle_create,
+            'drop': self._handle_drop,
             'desc': self._handle_desc,
             'schema': self._handle_desc,
             'fields': self._handle_desc,
@@ -196,6 +197,17 @@ class TeableCLI:
         
         self._ensure_client()
         return show_table_schema(self.client, self.session, args)
+    
+    def _handle_drop(self, args: list):
+        """处理删除表格命令"""
+        if not self.config.is_configured():
+            print("错误: 请先配置连接信息")
+            print("使用: t config --token YOUR_TOKEN --base YOUR_BASE_ID")
+            return 1
+        
+        self._ensure_client()
+        from commands.drop import drop_table_command
+        return drop_table_command(self.client, self.session, args)
 
 
 # Click命令行接口
