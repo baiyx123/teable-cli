@@ -24,6 +24,10 @@ Teable CLI - 命令行界面工具
   insert    插入记录
   update    更新记录
   delete    删除记录
+  alter     修改表格结构（添加字段等）
+  desc      显示表格结构（字段列表）
+  schema    显示表格结构（同 desc）
+  fields    显示表格结构（同 desc）
   help      显示帮助信息
   status    显示会话状态
   version   显示版本信息

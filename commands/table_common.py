@@ -192,6 +192,13 @@ def process_link_field_value(client, field_name: str, field_value: str, link_fie
     link_info = link_fields[field_name]
     foreign_table_id = link_info['foreign_table_id']
     
+    # 如果 field_value 是记录ID格式（rec开头，长度合理），且是管道模式（session=None），直接返回
+    # 这样可以避免不必要的查找，提高管道模式的性能
+    if session is None and field_value.startswith('rec') and len(field_value) >= 15:
+        # 管道模式下，直接使用记录ID，不需要查找
+        logger.debug(f"管道模式：直接使用记录ID '{field_value}' 作为关联字段 '{field_name}' 的值")
+        return field_value
+    
     print(f"正在查找关联字段 '{field_name}' 的目标记录: {field_value}")
     
     # 查找关联记录
@@ -810,4 +817,105 @@ def _build_query_params(where_conditions: Dict[str, str], limit: int = None) -> 
     return query_params
 
 
+def show_table_schema(client, session, args: list):
+    """显示表格结构（字段列表）
+    
+    用法:
+        t desc [表名]
+        t schema [表名]
+        t fields [表名]
+    
+    如果不指定表名，显示当前表的字段结构
+    """
+    if not client:
+        print("错误: 无法连接到Teable服务")
+        return 1
+    
+    # 检查是否指定了表名
+    table_name = None
+    if args:
+        table_name = args[0]
+    
+    # 获取表格ID
+    if table_name:
+        # 查找指定的表
+        tables = client.get_tables()
+        table_id = None
+        for table in tables:
+            if table.get('name') == table_name:
+                table_id = table.get('id')
+                table_name = table.get('name')
+                break
+        
+        if not table_id:
+            print(f"错误: 找不到表格 '{table_name}'")
+            print("可用表格:")
+            for table in tables:
+                print(f"  - {table.get('name')}")
+            return 1
+    else:
+        # 使用当前表
+        if not session.is_table_selected():
+            print("错误: 请先选择表格或指定表名")
+            print("使用: t use 表格名称")
+            print("或: t desc 表格名称")
+            return 1
+        
+        table_id = session.get_current_table_id()
+        table_name = session.get_current_table()
+    
+    try:
+        # 获取字段列表
+        fields = client.get_table_fields(table_id)
+        
+        if not fields:
+            print(f"表格 '{table_name}' 没有字段")
+            return 0
+        
+        # 显示表格信息
+        print(f"\n=== 表格结构: {table_name} ===")
+        print(f"表格ID: {table_id}")
+        print(f"字段数量: {len(fields)}\n")
+        
+        # 显示字段列表
+        print(f"{'序号':<4} {'字段名称':<40} {'字段类型':<20} {'说明':<10}")
+        print("-" * 80)
+        
+        for i, field in enumerate(fields, 1):
+            field_name = field.get('name', '未知')
+            field_type = field.get('type', '未知')
+            is_lookup = field.get('isLookup', False)
+            
+            # 格式化字段类型显示
+            type_display = field_type
+            if is_lookup:
+                type_display += " (lookup)"
+            
+            # 获取字段描述或其他信息
+            description = field.get('description', '')
+            if not description:
+                # 如果是关联字段，显示关联关系
+                if field_type == 'link':
+                    options = field.get('options', {})
+                    relationship = options.get('relationship', '')
+                    foreign_table_id = options.get('foreignTableId', '')
+                    if relationship and foreign_table_id:
+                        # 查找目标表名
+                        tables = client.get_tables()
+                        foreign_table_name = '未知表'
+                        for table in tables:
+                            if table.get('id') == foreign_table_id:
+                                foreign_table_name = table.get('name')
+                                break
+                        description = f"{relationship} -> {foreign_table_name}"
+            
+            print(f"{i:<4} {field_name:<40} {type_display:<20} {description}")
+        
+        print()
+        return 0
+        
+    except Exception as e:
+        print(f"错误: 获取表格结构失败: {e}")
+        logger.error(f"获取表格结构失败: {e}", exc_info=True)
+        return 1
 

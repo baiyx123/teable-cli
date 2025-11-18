@@ -58,8 +58,13 @@ class TeableClient:
                 params=params, timeout=10
             )
             # 对于创建操作，201也是成功状态码
-            if response.status_code not in [200, 201]:
+            # 对于更新操作，204 No Content 也是成功状态码
+            if response.status_code not in [200, 201, 204]:
                 response.raise_for_status()
+            
+            # 对于 204 No Content，返回空字典表示成功
+            if response.status_code == 204:
+                return {}
             
             # 检查响应内容
             if not response.text.strip():
@@ -174,7 +179,7 @@ class TeableClient:
         endpoint = f"/table/{table_id}/field/"
         return self._request("POST", endpoint, data=field_config)
 
-    def insert_records(self, table_id: str, records_data: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def insert_records(self, table_id: str, records_data: List[Dict[str, Any]], use_field_ids: bool = False) -> Dict[str, Any]:
         """
         插入记录
         
@@ -188,13 +193,28 @@ class TeableClient:
                         }
                     }
                 ]
+            use_field_ids: 是否使用字段ID作为键（用于插入关联字段）
                 
         Returns:
             插入结果
         """
         logger.info(f"向表格 {table_id} 插入 {len(records_data)} 条记录")
         endpoint = f"/table/{table_id}/record/"
-        return self._request("POST", endpoint, data={"records": records_data})
+        
+        if use_field_ids:
+            # 使用字段ID模式
+            data = {
+                "fieldKeyType": "id",
+                "records": records_data
+            }
+        else:
+            # 使用字段名模式（默认）
+            data = {
+                "fieldKeyType": "name",
+                "records": records_data
+            }
+        
+        return self._request("POST", endpoint, data=data)
 
     def get_records(self, table_id: str, page: int = 1, page_size: int = 100, **kwargs) -> Dict[str, Any]:
         """
@@ -252,7 +272,7 @@ class TeableClient:
         endpoint = f"/table/{table_id}/record/{record_id}"
         
         if use_field_ids:
-            # 用于更新关联字段的格式
+            # 用于更新关联字段的格式（使用字段ID）
             update_data = {
                 "fieldKeyType": "id",
                 "record": {
@@ -260,8 +280,14 @@ class TeableClient:
                 }
             }
         else:
-            # 普通字段更新格式
-            update_data = {"fields": fields_data}
+            # 普通字段更新格式（使用字段名）
+            # 对于关联字段，也可以使用字段名，但需要指定 fieldKeyType
+            update_data = {
+                "fieldKeyType": "name",
+                "record": {
+                    "fields": fields_data
+                }
+            }
         
         return self._request("PATCH", endpoint, data=update_data)
     

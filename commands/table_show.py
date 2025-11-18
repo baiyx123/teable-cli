@@ -32,51 +32,39 @@ from .table_common import (
 def show_current_table(client, session, args: list):
     """显示当前表格数据 - 支持智能管道操作和关联查询"""
     if not client:
-        print("错误: 无法连接到Teable服务")
+        print("错误: 无法连接到Teable服务", file=sys.stderr)
         return 1
     
     if not session.is_table_selected():
-        print("错误: 请先选择表格")
+        print("错误: 请先选择表格", file=sys.stderr)
         return 1
     
     try:
         table_id = session.get_current_table_id()
         table_name = session.get_current_table()
         
-        # 检测是否有管道输入（关联查询模式）
-        from .pipe_core import is_pipe_input, has_pipe_input_data, parse_pipe_input_line
+        from .pipe_core import is_pipe_input, is_pipe_output
         
-        # 检测是否有管道输入（关联查询模式）
-        # 只有在明确有管道数据时才进入关联查询模式
-        # 并且需要检查是否有 where 条件（关联查询必须要有 where 条件）
-        if is_pipe_input() and has_pipe_input_data():
-            # 检查是否有 where 条件参数（排除 limit=, order= 等参数）
-            # where 条件通常是 "字段名=值" 或 "where 字段名=值" 格式
-            has_where = False
-            for arg in args:
-                arg_lower = arg.lower()
-                # 排除 limit=, order= 等参数
-                if arg_lower.startswith('limit=') or arg_lower.startswith('order='):
-                    continue
-                # 检查是否是 where 关键字或字段=值格式（但不是 limit= 或 order=）
-                if arg_lower == 'where' or ('=' in arg and not arg_lower.startswith('limit=') and not arg_lower.startswith('order=')):
-                    has_where = True
-                    break
-            
+        # 管道输入模式（关联查询）：有管道输入且有where条件
+        if is_pipe_input():
+            # 检查是否有where条件（排除limit=, order=等参数）
+            has_where = any(
+                arg.lower() == 'where' or 
+                ('=' in arg and not arg.lower().startswith(('limit=', 'order=')))
+                for arg in args
+            )
             if has_where:
-                # 有 where 条件，进入关联查询模式
                 return show_pipe_input_mode(client, session, args, table_id, table_name)
-            # 没有 where 条件，可能是误判，回退到正常模式
         
-        # 检测是否为管道输出模式
+        # 管道输出模式：输出到管道
         if is_pipe_output():
             return show_pipe_mode(client, session, args, table_id, table_name)
         
-        # 原有终端显示模式
+        # 终端显示模式
         return show_table_mode(client, session, args, table_id, table_name)
         
     except Exception as e:
-        print(f"错误: 显示表格数据失败: {e}")
+        print(f"错误: 显示表格数据失败: {e}", file=sys.stderr)
         logger.error(f"显示表格数据失败: {e}", exc_info=True)
         return 1
 
@@ -86,8 +74,6 @@ def show_pipe_input_mode(client, session, args: list, table_id: str, table_name:
     """管道输入模式的show命令 - 关联查询，根据管道记录中的值查询当前表"""
     try:
         from .pipe_core import parse_pipe_input_line, format_record_for_pipe
-        
-        print(f"正在从管道读取记录进行关联查询...")
         
         # 解析查询条件参数，支持@字段名语法
         where_args = []
@@ -386,7 +372,7 @@ def show_pipe_mode(client, session, args: list, table_id: str, table_name: str):
         return 0
         
     except Exception as e:
-        print(f"错误: 显示表格数据失败: {e}")
+        print(f"错误: 显示表格数据失败: {e}", file=sys.stderr)
         return 1
 
 
@@ -539,7 +525,9 @@ def show_table_mode(client, session, args: list, table_id: str, table_name: str)
         records = records_data.get('records', [])
         
         if not records:
-            print(f"表格 '{table_name}' 中没有记录")
+            # 提示信息输出到stderr
+            if sys.stdout.isatty():
+                print(f"表格 '{table_name}' 中没有记录", file=sys.stderr)
             return 0
         
         # 获取字段信息
@@ -560,32 +548,39 @@ def show_table_mode(client, session, args: list, table_id: str, table_name: str)
                 row.append(value)
             rows.append(row)
         
-        # 使用rich库显示彩色表格
-        if console.is_terminal:
-            table = Table(title=f"表格: {table_name}")
-            
-            # 添加recordId列作为第一列
-            table.add_column("记录ID", style="yellow", no_wrap=False)
-            for field_name in field_names:
-                table.add_column(field_name, style="cyan", no_wrap=False)
-            
-            for row in rows:
-                table.add_row(*[str(cell) for cell in row])
-            
-            console.print(table)
-        else:
-            # 非终端环境使用tabulate - 添加recordId到表头
-            headers = ["记录ID"] + field_names
-            print(tabulate(rows, headers=headers, tablefmt='simple'))
+        # 统一输出格式：总是输出标准管道格式到stdout
+        from .pipe_core import format_record_for_pipe
+        for record in records:
+            output_line = format_record_for_pipe(record)
+            print(output_line, flush=True)
         
-        # 显示统计信息
-        total_count = records_data.get('total', len(records))
-        print(f"\n📊 显示 {len(records)}/{total_count} 条记录")
+        # 如果输出到终端，额外显示人类可读的表格到stderr
+        if sys.stdout.isatty():
+            if console.is_terminal:
+                table = Table(title=f"表格: {table_name}")
+                
+                # 添加recordId列作为第一列
+                table.add_column("记录ID", style="yellow", no_wrap=False)
+                for field_name in field_names:
+                    table.add_column(field_name, style="cyan", no_wrap=False)
+                
+                for row in rows:
+                    table.add_row(*[str(cell) for cell in row])
+                
+                console.print(table, file=sys.stderr)
+            else:
+                # 非终端环境使用tabulate - 添加recordId到表头
+                headers = ["记录ID"] + field_names
+                print(tabulate(rows, headers=headers, tablefmt='simple'), file=sys.stderr)
+            
+            # 显示统计信息到stderr
+            total_count = records_data.get('total', len(records))
+            print(f"\n📊 显示 {len(records)}/{total_count} 条记录", file=sys.stderr)
         
         return 0
         
     except Exception as e:
-        print(f"错误: 显示表格数据失败: {e}")
+        print(f"错误: 显示表格数据失败: {e}", file=sys.stderr)
         return 1
 
 

@@ -18,7 +18,8 @@ from session import Session
 from commands import (
     list_tables, show_current_table, use_table, 
     show_help, config_command, show_session_status,
-    insert_record, update_record, delete_record
+    insert_record, update_record, delete_record,
+    alter_command, show_table_schema
 )
 
 # 版本号
@@ -71,6 +72,10 @@ class TeableCLI:
             'update': self._handle_update,
             'delete': self._handle_delete,
             'version': self._handle_version,
+            'alter': self._handle_alter,
+            'desc': self._handle_desc,
+            'schema': self._handle_desc,
+            'fields': self._handle_desc,
         }
         
         handler = commands.get(command)
@@ -119,12 +124,24 @@ class TeableCLI:
     
     def _handle_insert(self, args: list):
         """处理插入记录命令"""
-        if not self.session.is_table_selected():
-            print("错误: 请先选择表格")
-            print("使用: t use 表格名称")
-            return 1
+        # 如果第一个参数可能是表名（不是字段=值格式），让insert_record处理表名切换
+        # 否则检查是否已选择表格
+        if not args or '=' in args[0]:
+            # 没有参数或第一个参数是字段=值格式，需要检查session
+            if not self.session.is_table_selected():
+                print("错误: 请先选择表格")
+                print("使用: t use 表格名称")
+                return 1
         
-        return insert_record(self.client, self.session, args)
+        result = insert_record(self.client, self.session, args)
+        # insert_record 返回 (状态码, 记录ID) 元组（非管道模式）或整数（管道模式）
+        # 记录ID已经由 insert_record 输出到stdout（标准管道格式）
+        if isinstance(result, tuple):
+            status_code, record_id = result
+            return status_code
+        else:
+            # 管道模式返回的是整数状态码，直接返回
+            return result
     
     def _handle_update(self, args: list):
         """处理更新记录命令"""
@@ -148,6 +165,26 @@ class TeableCLI:
         """处理版本命令"""
         print(f"teable-cli version {__version__}")
         return 0
+    
+    def _handle_alter(self, args: list):
+        """处理表格结构修改命令"""
+        if not self.config.is_configured():
+            print("错误: 请先配置连接信息")
+            print("使用: t config --token YOUR_TOKEN --base YOUR_BASE_ID")
+            return 1
+        
+        self._ensure_client()
+        return alter_command(self.client, self.session, args)
+    
+    def _handle_desc(self, args: list):
+        """处理表格结构查看命令"""
+        if not self.config.is_configured():
+            print("错误: 请先配置连接信息")
+            print("使用: t config --token YOUR_TOKEN --base YOUR_BASE_ID")
+            return 1
+        
+        self._ensure_client()
+        return show_table_schema(self.client, self.session, args)
 
 
 # Click命令行接口

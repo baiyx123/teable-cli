@@ -35,7 +35,7 @@ def update_record(client, session, args: list):
     """更新记录，支持条件更新（where语法）和智能管道操作，支持指定表名"""
     try:
         # 检测是否有管道输入 - 智能管道模式
-        from .pipe_core import is_pipe_input, has_pipe_input_data, parse_pipe_input_line
+        from .pipe_core import is_pipe_input
         
         # 检查第一个参数是否是表名
         target_table_name = None
@@ -74,9 +74,36 @@ def update_record(client, session, args: list):
             table_id = session.get_current_table_id()
             table_name = session.get_current_table()
         
-        # 检测是否有管道输入（需要同时满足两个条件）
-        if is_pipe_input() and has_pipe_input_data():
-            # 管道输入模式：从管道读取记录并更新
+        # 检查参数中是否有记录ID或字段映射
+        has_record_id = False
+        has_field_mapping = False
+        
+        for arg in remaining_args:
+            # 检查是否是记录ID
+            if arg.startswith('rec') and len(arg) > 10:
+                has_record_id = True
+                break
+            # 检查是否有字段映射（@字段名 或 $字段名）
+            # 需要检查等号后面的值，以及条件操作符后面的值
+            if '=' in arg:
+                parts = arg.split('=', 1)
+                if len(parts) == 2:
+                    value = parts[1].strip()
+                    if value.startswith('@') or value.startswith('$'):
+                        has_field_mapping = True
+            elif '>' in arg or '<' in arg or '>=' in arg or '<=' in arg or '!=' in arg:
+                # 处理条件操作符
+                for op in ['>=', '<=', '!=', '>', '<']:
+                    if op in arg:
+                        parts = arg.split(op, 1)
+                        if len(parts) == 2:
+                            value = parts[1].strip()
+                            if value.startswith('@') or value.startswith('$'):
+                                has_field_mapping = True
+                                break
+        
+        # 管道模式：有管道输入、没有记录ID、有字段映射
+        if is_pipe_input() and not has_record_id and has_field_mapping:
             return update_pipe_mode(client, session, table_id, table_name, remaining_args)
         
         # 传统模式处理
@@ -158,11 +185,7 @@ def update_pipe_mode(client, session, table_id: str, table_name: str, args: list
             # 更新后的表信息
             table_id = session.get_current_table_id()
             table_name = session.get_current_table()
-            print(f"切换到表格 '{table_name}' 进行更新...")
         
-        print(f"正在从管道流式读取记录进行批量更新...")
-        
-        # 确保导入解析函数
         from .pipe_core import parse_pipe_input_line
         
         # 解析参数，分离更新字段和where条件
@@ -242,15 +265,6 @@ def _update_pipe_direct_mode(client, session, table_id: str, table_name: str, ar
         
         # 从管道流式读取记录
         try:
-            # 先检查是否有数据可读
-            import select
-            readable, _, _ = select.select([sys.stdin], [], [], 0.1)
-            if not readable:
-                # 没有数据，回退到正常模式
-                print("错误: 没有从管道接收到有效的记录数据")
-                print("提示: 如果这不是管道模式，请检查命令参数")
-                return 1
-            
             for line in sys.stdin:
                 record = parse_pipe_input_line(line)
                 if record:
@@ -338,14 +352,6 @@ def _update_pipe_merge_mode(client, session, table_id: str, table_name: str,
         
         # 从管道流式读取记录
         try:
-            # 先检查是否有数据可读
-            import select
-            readable, _, _ = select.select([sys.stdin], [], [], 0.1)
-            if not readable:
-                # 没有数据，回退到正常模式
-                print("错误: 没有从管道接收到有效的记录数据")
-                print("提示: 如果这不是管道模式，请检查命令参数")
-                return 1
             for line in sys.stdin:
                 pipe_record = parse_pipe_input_line(line)
                 if pipe_record:
@@ -690,8 +696,15 @@ def _update_single_record(client, session, table_id, table_name, fields, link_fi
                     if field_name in link_fields:
                         linked_record_id = process_link_field_value(client, field_name, value, link_fields, session)
                         if linked_record_id:
-                            # 关联字段需要使用 [{'id': record_id}] 格式（manyMany关系）
-                            update_data[field_name] = [{'id': linked_record_id}]
+                            # 根据关联类型决定格式
+                            relationship = link_fields[field_name].get('relationship', 'manyOne')
+                            logger.info(f"关联字段 '{field_name}' 的关联类型: {relationship}")
+                            if relationship in ['manyMany', 'oneMany']:
+                                # 多对多/一对多关系使用数组格式
+                                update_data[field_name] = [{'id': linked_record_id}]
+                            else:
+                                # 一对一/多对一关系使用对象格式
+                                update_data[field_name] = {'id': linked_record_id}
                         else:
                             print(f"⚠️  跳过关联字段 '{field_name}'，未找到有效关联记录")
                     else:
@@ -707,12 +720,12 @@ def _update_single_record(client, session, table_id, table_name, fields, link_fi
     # 检查是否有关联字段需要特殊处理
     has_link_fields = any(field_name in link_fields for field_name in update_data.keys())
     
-    if has_link_fields:
-        # 使用字段ID模式更新关联字段
-        result = client.update_record(table_id, record_id, update_data, use_field_ids=False)
-    else:
-        # 普通更新
-        result = client.update_record(table_id, record_id, update_data)
+    # 打印更新数据用于调试
+    logger.info(f"更新数据: {update_data}")
+    
+    # 直接使用字段名模式更新（包括关联字段）
+    # Teable API 应该支持使用字段名更新关联字段
+    result = client.update_record(table_id, record_id, update_data, use_field_ids=False)
     
     if result:
         print(f"✅ 成功更新记录 {record_id}")

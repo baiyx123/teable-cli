@@ -6,9 +6,7 @@ Teable CLI 智能管道操作核心组件
 """
 
 import sys
-import json
-import select
-from typing import List, Dict, Any, Optional, Iterator
+from typing import Dict, Any, Optional, List
 
 
 def is_pipe_input() -> bool:
@@ -21,36 +19,6 @@ def is_pipe_output() -> bool:
     return not sys.stdout.isatty()
 
 
-def has_pipe_input_data(timeout: float = 0.1) -> bool:
-    """检测标准输入是否有数据可读
-    
-    注意：在非交互式环境中（如脚本），即使 stdin 不是 tty，
-    也不意味着一定有管道数据。需要实际检查是否有数据可读。
-    """
-    if not is_pipe_input():
-        return False
-    
-    try:
-        # 使用select检查是否有数据可读
-        readable, _, _ = select.select([sys.stdin], [], [], timeout)
-        return bool(readable)
-    except (select.error, OSError):
-        return False
-    except Exception:
-        # 捕获其他可能的异常
-        return False
-
-
-def wait_for_pipe_input(timeout: float = 1.0) -> bool:
-    """等待管道输入数据"""
-    if not is_pipe_input():
-        return False
-    
-    try:
-        readable, _, _ = select.select([sys.stdin], [], [], timeout)
-        return bool(readable)
-    except (select.error, OSError):
-        return False
 
 
 class SimplePipeData:
@@ -393,7 +361,8 @@ def parse_pipe_input_line(line: str) -> Optional[Dict[str, Any]]:
     parts = line.split(' ', 1)
     record_id = parts[0] if parts else ''
     
-    if not record_id:
+    # 只解析以rec开头的行（记录ID格式），忽略其他行（如人类可读的消息）
+    if not record_id or not record_id.startswith('rec'):
         return None
     
     record = {

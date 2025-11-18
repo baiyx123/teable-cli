@@ -28,17 +28,59 @@ from .table_common import *
 def insert_record(client, session, args: list):
     """插入记录，返回(状态码, 记录ID)元组"""
     try:
-        table_id = session.get_current_table_id()
-        table_name = session.get_current_table()
+        # 检测是否有管道输入 - 智能管道模式
+        from .pipe_core import is_pipe_input
+        
+        # 检查第一个参数是否是表名
+        target_table_name = None
+        remaining_args = args
+        
+        if args:
+            first_arg = args[0]
+            # 判断是否是表名：不是字段=值格式
+            is_field_assignment = '=' in first_arg
+            
+            if not is_field_assignment:
+                # 可能是表名，尝试查找表格
+                tables = client.get_tables()
+                for table in tables:
+                    if table.get('name') == first_arg:
+                        target_table_name = first_arg
+                        remaining_args = args[1:]
+                        break
+        
+        # 如果指定了表名，切换到该表
+        if target_table_name:
+            original_table = session.get_current_table()
+            original_table_id = session.get_current_table_id()
+            
+            result = use_table(client, session, target_table_name)
+            if result != 0:
+                return result, None
+            
+            # 更新后的表信息
+            table_id = session.get_current_table_id()
+            table_name = session.get_current_table()
+        else:
+            # 使用当前表
+            table_id = session.get_current_table_id()
+            table_name = session.get_current_table()
         
         logger.info(f"开始插入记录到表格 '{table_name}' (ID: {table_id})")
         
-        # 检测是否有管道输入 - 智能管道模式
-        from .pipe_core import is_pipe_input, has_pipe_input_data, parse_pipe_input_line
+        # 检查参数中是否有字段映射（@字段名 或 $字段名）
+        has_field_mapping = False
+        if remaining_args:
+            for arg in remaining_args:
+                if '=' in arg:
+                    _, value = arg.split('=', 1)
+                    if value.strip().startswith('@') or value.strip().startswith('$'):
+                        has_field_mapping = True
+                        break
         
-        if is_pipe_input():
-            # 管道输入模式：从管道读取记录并插入
-            return insert_pipe_mode(client, session, table_id, table_name, args)
+        # 管道模式判断：如果有管道输入且有字段映射，进入管道模式
+        if is_pipe_input() and has_field_mapping:
+            return insert_pipe_mode(client, session, table_id, table_name, remaining_args)
         
         # 获取字段信息和关联字段
         fields = client.get_table_fields(table_id)
@@ -46,7 +88,7 @@ def insert_record(client, session, args: list):
         
         logger.debug(f"获取到 {len(fields)} 个字段，其中 {len(link_fields)} 个关联字段")
         
-        if not args:
+        if not remaining_args:
             # 交互式模式
             print(f"向表格 '{table_name}' 插入记录:")
             record_data = {}
@@ -174,7 +216,7 @@ def insert_record(client, session, args: list):
             
             # 先收集所有提供的字段
             provided_fields = {}
-            for arg in args:
+            for arg in remaining_args:
                 if '=' in arg:
                     field_name, value = arg.split('=', 1)
                     provided_fields[field_name] = value
@@ -252,19 +294,31 @@ def insert_record(client, session, args: list):
             print("没有有效数据，取消插入")
             return 0, None
         
+        # 检查是否有关联字段
+        has_link_fields = any(field_name in link_fields for field_name in record_data.keys())
+        
         # 插入记录 - 使用正确的insert_records方法
         logger.info(f"准备插入记录，包含字段: {list(record_data.keys())}")
-        result = client.insert_records(table_id, [{'fields': record_data}])
+        # 如果有关联字段，使用字段名模式（fieldKeyType: "name"）
+        result = client.insert_records(table_id, [{'fields': record_data}], use_field_ids=False)
         
         if result and 'records' in result:
             inserted_record = result['records'][0]
             record_id = inserted_record.get('id')
             logger.info(f"成功插入记录，ID: {record_id}")
-            print(f"✅ 成功插入记录，ID: {record_id}")
+            
+            # 统一输出格式：总是输出记录ID到stdout（标准管道格式）
+            print(record_id)
+            
+            # 人类可读的消息输出到stderr，这样不会影响管道传递
+            if sys.stdout.isatty():
+                print(f"✅ 成功插入记录，ID: {record_id}", file=sys.stderr)
+            
             return 0, record_id
         else:
             logger.error("插入记录失败：API返回结果异常")
-            print("❌ 插入记录失败")
+            if sys.stdout.isatty():
+                print("❌ 插入记录失败", file=sys.stderr)
             return 1, None
             
     except Exception as e:
@@ -277,16 +331,13 @@ def insert_record(client, session, args: list):
 def insert_pipe_mode(client, session, table_id: str, table_name: str, args: list):
     """管道模式的insert命令 - 从管道流式读取记录并批量插入"""
     try:
-        # 检测是否有管道输出（链式管道操作）
-        from .pipe_core import is_pipe_output
-        
-        if is_pipe_output():
-            print(f"正在从管道流式读取记录进行批量插入（链式管道模式）...")
-        else:
-            print(f"正在从管道流式读取记录进行批量插入...")
-        
-        # 确保导入解析函数
         from .pipe_core import parse_pipe_input_line
+        
+        # 直接读取第一行
+        first_line = sys.stdin.readline()
+        if not first_line or not first_line.strip():
+            print("错误: 没有从管道接收到有效的记录数据", file=sys.stderr)
+            return 1
         
         # 获取字段信息和关联字段
         fields = client.get_table_fields(table_id)
@@ -358,6 +409,16 @@ def insert_pipe_mode(client, session, table_id: str, table_name: str, args: list
         
         # 从管道流式读取记录
         try:
+            # 先处理第一行（已经在前面读取了）
+            logger.debug(f"解析第一行管道输入: '{first_line.strip()}'")
+            pipe_record = parse_pipe_input_line(first_line)
+            if pipe_record:
+                logger.debug(f"解析成功: record_id='{pipe_record.get('id')}', fields={list(pipe_record.get('fields', {}).keys())}")
+                current_batch.append(pipe_record)
+            else:
+                logger.warning(f"第一行解析失败，跳过: '{first_line.strip()}'")
+            
+            # 继续读取剩余的行
             for line in sys.stdin:
                 pipe_record = parse_pipe_input_line(line)
                 if pipe_record:
@@ -424,6 +485,7 @@ def _process_insert_batch(client, table_id: str, batch_records: List[Dict[str, A
                 record_data = {}
                 record_id = pipe_record.get('id', '')
                 pipe_fields = pipe_record.get('fields', {})
+                logger.info(f"处理管道记录: record_id='{record_id}', pipe_fields={list(pipe_fields.keys())}")
                 
                 # 根据字段映射构建记录数据
                 for target_field, mapping_info in field_mappings.items():
@@ -447,7 +509,15 @@ def _process_insert_batch(client, table_id: str, batch_records: List[Dict[str, A
                     if mapping_info['type'] == 'field_mapping':
                         # 字段映射：从管道记录中获取字段值
                         source_field = mapping_info['source_field']
-                        if source_field in pipe_fields:
+                        logger.info(f"处理字段映射: 目标字段='{target_field}', 源字段='{source_field}', record_id='{record_id}'")
+                        # 特殊处理：@id 表示记录ID，从 pipe_record 的 id 字段获取
+                        if source_field == 'id' or source_field == '@id':
+                            field_value = record_id
+                            logger.info(f"使用记录ID: field_value='{field_value}'")
+                            if not field_value:
+                                logger.warning(f"记录ID为空，跳过字段 '{target_field}'")
+                                continue
+                        elif source_field in pipe_fields:
                             field_value = pipe_fields[source_field]
                         else:
                             logger.warning(f"管道记录中不存在字段 '{source_field}'，跳过字段 '{target_field}'")
@@ -487,20 +557,35 @@ def _process_insert_batch(client, table_id: str, batch_records: List[Dict[str, A
         
         # 执行批量插入
         if insert_records:
-            result = client.insert_records(table_id, insert_records)
-            if result and 'records' in result:
-                inserted_count = len(result['records'])
-                batch_success += inserted_count
-                logger.info(f"成功插入批次: {inserted_count} 条记录 (累计: {progress_count})")
-                
-                # 如果有管道输出，输出插入的记录（链式管道操作）
-                from .pipe_core import is_pipe_output, format_record_for_pipe
-                if is_pipe_output():
+            # 检查是否有关联字段
+            has_link_fields = any(
+                any(target_field in link_fields for target_field in record.get('fields', {}).keys())
+                for record in insert_records
+            )
+            
+            # 如果有关联字段，使用字段名模式（fieldKeyType: "name"）
+            try:
+                result = client.insert_records(table_id, insert_records, use_field_ids=False)
+                if result and 'records' in result:
+                    inserted_count = len(result['records'])
+                    batch_success += inserted_count
+                    logger.info(f"成功插入批次: {inserted_count} 条记录 (累计: {progress_count})")
+                    
+                    # 统一输出格式：总是输出记录ID到stdout（标准管道格式）
                     for inserted_record in result['records']:
-                        output_line = format_record_for_pipe(inserted_record)
-                        print(output_line, flush=True)
-            else:
-                logger.warning(f"批次插入失败: {len(insert_records)} 条记录")
+                        record_id = inserted_record.get('id', '')
+                        if record_id:
+                            print(record_id, flush=True)
+                    
+                    # 人类可读的消息输出到stderr，这样不会影响管道传递
+                    if sys.stdout.isatty():
+                        print(f"✅ 成功插入 {inserted_count} 条记录", file=sys.stderr)
+                else:
+                    logger.warning(f"批次插入失败: {len(insert_records)} 条记录")
+                    batch_errors += len(insert_records)
+            except Exception as e:
+                logger.error(f"批次插入异常: {e}", exc_info=True)
+                logger.error(f"插入数据: {insert_records}")
                 batch_errors += len(insert_records)
         
         return batch_success, batch_errors
