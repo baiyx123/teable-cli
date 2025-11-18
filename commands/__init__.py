@@ -23,10 +23,13 @@ from .table_update import (
 from .alter import (
     alter_command
 )
+from .create import (
+    create_table_command
+)
 
 __all__ = [
     'show_help', 'config_command', 'show_session_status',
     'list_tables', 'use_table', 'show_current_table',
     'insert_record', 'update_record', 'delete_record',
-    'alter_command', 'show_table_schema'
+    'alter_command', 'show_table_schema', 'create_table_command'
 ]

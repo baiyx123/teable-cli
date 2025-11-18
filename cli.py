@@ -19,7 +19,7 @@ from commands import (
     list_tables, show_current_table, use_table, 
     show_help, config_command, show_session_status,
     insert_record, update_record, delete_record,
-    alter_command, show_table_schema
+    alter_command, show_table_schema, create_table_command
 )
 
 # 版本号
@@ -73,6 +73,7 @@ class TeableCLI:
             'delete': self._handle_delete,
             'version': self._handle_version,
             'alter': self._handle_alter,
+            'create': self._handle_create,
             'desc': self._handle_desc,
             'schema': self._handle_desc,
             'fields': self._handle_desc,
@@ -175,6 +176,16 @@ class TeableCLI:
         
         self._ensure_client()
         return alter_command(self.client, self.session, args)
+    
+    def _handle_create(self, args: list):
+        """处理创建表格命令"""
+        if not self.config.is_configured():
+            print("错误: 请先配置连接信息")
+            print("使用: t config --token YOUR_TOKEN --base YOUR_BASE_ID")
+            return 1
+        
+        self._ensure_client()
+        return create_table_command(self.client, self.session, args)
     
     def _handle_desc(self, args: list):
         """处理表格结构查看命令"""

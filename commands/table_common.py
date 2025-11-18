@@ -14,7 +14,7 @@ from rich.table import Table
 
 # 导入管道操作组件
 from .pipe_core import (
-    is_pipe_output, format_record_for_pipe, SmartPipeHandler
+    is_pipe_output, format_record_for_pipe
 )
 
 
@@ -392,6 +392,7 @@ def convert_field_value(field_type: str, value: Any) -> Any:
             return value
         if isinstance(value, str):
             return [v.strip() for v in value.split(',')]
+        return value
         return value
     return value
 

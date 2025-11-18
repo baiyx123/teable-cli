@@ -14,7 +14,7 @@ from rich.table import Table
 
 # 导入管道操作组件
 from .pipe_core import (
-    is_pipe_output, format_record_for_pipe, SmartPipeHandler
+    is_pipe_output, format_record_for_pipe
 )
 
 

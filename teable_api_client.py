@@ -695,62 +695,64 @@ def create_lookup_field_config(name: str, field_type: str, foreign_table_id: str
     }
 
 
-    def create_formula_field_config(name: str, expression: str) -> Dict[str, Any]:
-        """
-        创建公式字段配置的辅助函数
+def create_formula_field_config(name: str, expression: str) -> Dict[str, Any]:
+    """
+    创建公式字段配置的辅助函数
+    
+    Args:
+        name: 字段名称
+        expression: 公式表达式，使用 {字段ID} 引用其他字段
         
-        Args:
-            name: 字段名称
-            expression: 公式表达式，使用 {字段ID} 引用其他字段
-            
-        Returns:
-            公式字段配置字典
-        """
-        return {
-            "type": "formula",
-            "name": name,
-            "options": {
-                "expression": expression
-            }
+    Returns:
+        公式字段配置字典
+    """
+    return {
+        "type": "formula",
+        "name": name,
+        "options": {
+            "expression": expression
         }
+    }
 
-    def create_single_select_field_config(name: str, choices: List[Dict[str, str]]) -> Dict[str, Any]:
-        """
-        创建单选字段配置的辅助函数
-        
-        Args:
-            name: 字段名称
-            choices: 选项列表，格式：[{"name": "选项名称", "color": "颜色"}]
-            
-        Returns:
-            单选字段配置字典
-        """
-        return {
-            "type": "singleSelect",
-            "name": name,
-            "options": {
-                "choices": choices
-            }
-        }
 
-    def create_multiple_select_field_config(name: str, choices: List[Dict[str, str]]) -> Dict[str, Any]:
-        """
-        创建多选字段配置的辅助函数
+def create_single_select_field_config(name: str, choices: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    创建单选字段配置的辅助函数
+    
+    Args:
+        name: 字段名称
+        choices: 选项列表，格式：[{"name": "选项名称", "color": "颜色"}]
         
-        Args:
-            name: 字段名称
-            choices: 选项列表，格式：[{"name": "选项名称", "color": "颜色"}]
-            
-        Returns:
-            多选字段配置字典
-        """
-        return {
-            "type": "multipleSelect",
-            "name": name,
-            "options": {
-                "choices": choices
-            }
+    Returns:
+        单选字段配置字典
+    """
+    return {
+        "type": "singleSelect",
+        "name": name,
+        "options": {
+            "choices": choices
         }
+    }
+
+
+def create_multiple_select_field_config(name: str, choices: List[Dict[str, str]]) -> Dict[str, Any]:
+    """
+    创建多选字段配置的辅助函数
+    
+    Args:
+        name: 字段名称
+        choices: 选项列表，格式：[{"name": "选项名称", "color": "颜色"}]
+        
+    Returns:
+        多选字段配置字典
+    """
+    return {
+        "type": "multipleSelect",
+        "name": name,
+        "options": {
+            "choices": choices
+        }
+    }
 
     def create_view_config(name: str, description: str = "", view_type: str = "grid",
                           options: Dict[str, Any] = None, filter_config: Dict[str, Any] = None,

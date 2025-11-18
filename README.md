@@ -5,10 +5,12 @@
 ## 功能特性
 
 - **表格管理**: 创建、查看、切换表格
+- **表格结构管理**: 创建表格、添加字段、查看表结构
 - **记录操作**: 插入、更新、删除、查询记录
 - **关联字段支持**: 智能处理关联字段，支持多种匹配方式
+- **公式字段支持**: 创建和计算公式字段
 - **交互式操作**: 友好的交互式界面
-- **灵活查·询**: 支持过滤、排序、分页等高级查询
+- **灵活查询**: 支持过滤、排序、分页等高级查询
 - **管道流式操作**: 支持Linux管道，实现命令链式操作和流式数据处理
 
 ## 安装
@@ -59,6 +61,109 @@ t update [表名] 字段1=值1 字段2=值2 ... [where 条件字段1=值1 ...]
 
 # 删除记录
 t delete <记录ID1> [记录ID2 ...]
+
+# 创建表格
+t create <表名> [字段定义...]
+t create <表名> --desc <描述> [字段定义...]
+
+# 查看表格结构
+t desc [表名]
+t schema [表名]
+t fields [表名]
+
+# 修改表格结构（添加字段）
+t alter add <字段名> <字段类型> [选项...]
+t alter add <字段名> link <关联关系> <目标表名>
+t alter add <字段名> lookup <关联字段名> <引用字段名>
+t alter add <字段名> formula <表达式>
+
+# 查看版本
+t version
+```
+
+### 创建和管理表格
+
+#### 创建表格
+
+```bash
+# 创建简单表
+t create 测试表 姓名:singleLineText 年龄:number
+
+# 创建带描述的表
+t create 订单表 --desc "订单信息表" 订单号:singleLineText 金额:number
+
+# 创建带选项的表
+t create 状态表 状态名:singleLineText 类型:singleSelect:类型1,类型2
+
+# 创建带关联字段的表（需要先有目标表）
+t create 订单表 订单号:singleLineText 关联客户:link:manyOne:客户表
+
+# 创建带公式字段的表
+t create 订单明细表 单价:number 数量:number 总价:formula:{单价} * {数量}
+```
+
+**字段定义格式：**
+- `<字段名>:<字段类型>` - 普通字段
+- `<字段名>:link:<关联关系>:<目标表名>` - 关联字段
+- `<字段名>:formula:<表达式>` - 公式字段（表达式使用 `{字段名}` 引用其他字段）
+
+**支持的字段类型：**
+- `singleLineText` - 单行文本
+- `longText` - 长文本
+- `number` - 数字
+- `checkbox` - 复选框
+- `singleSelect` - 单选（格式: `singleSelect:选项1,选项2`）
+- `multipleSelect` - 多选（格式: `multipleSelect:选项1,选项2`）
+- `date` - 日期
+- `rating` - 评分
+- `formula` - 公式字段
+- `rollup` - 汇总
+- `autoNumber` - 自动编号
+- `link` - 关联字段
+- `user` - 用户
+- `attachment` - 附件
+
+**关联关系类型：**
+- `manyOne` - 多对一
+- `oneMany` - 一对多
+- `manyMany` - 多对多
+- `oneOne` - 一对一
+
+**公式字段说明：**
+- 公式字段会在表创建后自动添加（因为需要引用其他字段的ID）
+- 表达式使用 `{字段名}` 引用其他字段，会自动转换为字段ID
+- 支持常见的数学运算和函数
+
+#### 查看表格结构
+
+```bash
+# 查看当前表的结构
+t desc
+
+# 查看指定表的结构
+t desc 订单表
+
+# 使用别名
+t schema 订单表
+t fields 订单表
+```
+
+#### 修改表格结构
+
+```bash
+# 添加普通字段
+t alter add 备注 longText
+t alter add 金额 number
+t alter add 是否启用 checkbox
+
+# 添加关联字段
+t alter add 关联客户 link manyOne 客户表
+
+# 添加引用字段（Lookup）
+t alter add 客户名称 lookup 关联客户 客户名称
+
+# 添加公式字段
+t alter add 总价 formula "{单价} * {数量}"
 ```
 
 ### 关联字段支持
@@ -432,6 +537,24 @@ t show 注册时间>2024-01-01 | grep "活跃度=高" | head -100 | t update 标
    - 避免在大量数据上使用模糊匹配
 
 ## 更新日志
+
+### v1.3.0
+- **新增表格创建功能** (`t create`)
+  - 支持创建各种字段类型的表格
+  - 支持创建关联字段（link）
+  - 支持创建公式字段（formula）
+  - 支持创建带选项的字段（singleSelect, multipleSelect）
+  - 自动处理字段依赖关系（关联字段和公式字段在表创建后添加）
+- **新增表格结构查看功能** (`t desc`, `t schema`, `t fields`)
+  - 查看表格的所有字段及其类型
+  - 显示关联字段的关联关系
+  - 显示公式字段的表达式
+- **新增表格结构修改功能** (`t alter add`)
+  - 支持添加各种类型的字段
+  - 支持添加关联字段和引用字段（lookup）
+  - 支持添加公式字段
+- **新增版本命令** (`t version`)
+  - 显示 CLI 版本信息
 
 ### v1.2.0
 - 新增管道流式操作支持

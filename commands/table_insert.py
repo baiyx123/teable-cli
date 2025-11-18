@@ -14,7 +14,7 @@ from rich.table import Table
 
 # 导入管道操作组件
 from .pipe_core import (
-    is_pipe_output, format_record_for_pipe, SmartPipeHandler
+    is_pipe_output, format_record_for_pipe
 )
 
 
@@ -276,6 +276,7 @@ def insert_record(client, session, args: list):
                 else:
                     # 普通字段，需要根据字段类型转换值
                     converted_value = convert_field_value(field_type, value)
+                    logger.debug(f"字段 '{field_name}' (类型: {field_type}) 值转换: {value} -> {converted_value}")
                     record_data[field_name] = converted_value
             
             # 检查是否有未识别的字段

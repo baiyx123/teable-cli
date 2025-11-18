@@ -16,6 +16,7 @@ class Config:
     def __init__(self):
         self.config_dir = Path.home() / '.teable'
         self.config_file = self.config_dir / 'config.json'
+        self.token_file = self.config_dir / 'token.txt'
         self.session_file = self.config_dir / 'session.json'
         self.history_file = self.config_dir / 'history'
         
@@ -51,6 +52,15 @@ class Config:
             except (json.JSONDecodeError, IOError) as e:
                 print(f"警告: 配置文件加载失败: {e}")
                 print("使用默认配置")
+        
+        # 加载 token（从单独的文件）
+        if self.token_file.exists():
+            try:
+                token = self.token_file.read_text(encoding='utf-8').strip()
+                if token:
+                    self.config['token'] = token
+            except IOError:
+                pass
     
     def save_config(self):
         """保存配置文件"""
@@ -64,6 +74,11 @@ class Config:
             
             # 设置文件权限为600（仅所有者可读写）
             os.chmod(self.config_file, 0o600)
+            
+            # 单独保存 token 到文件
+            if 'token' in self.config and self.config['token']:
+                self.token_file.write_text(self.config['token'], encoding='utf-8')
+                os.chmod(self.token_file, 0o600)
             
         except IOError as e:
             print(f"错误: 配置文件保存失败: {e}")
