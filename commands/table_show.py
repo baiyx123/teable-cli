@@ -35,15 +35,45 @@ def show_current_table(client, session, args: list):
         print("错误: 无法连接到Teable服务", file=sys.stderr)
         return 1
     
-    if not session.is_table_selected():
-        print("错误: 请先选择表格", file=sys.stderr)
-        return 1
+    # 检查第一个参数是否是表名
+    target_table_name = None
+    remaining_args = args
     
-    try:
+    if args:
+        first_arg = args[0]
+        # 判断是否是表名：不是字段=值格式，不是limit=, order=等参数
+        is_field_assignment = '=' in first_arg
+        is_limit_or_order = first_arg.lower().startswith(('limit=', 'order='))
+        
+        if not is_field_assignment and not is_limit_or_order:
+            # 可能是表名，尝试查找表格
+            tables = client.get_tables()
+            for table in tables:
+                if table.get('name') == first_arg:
+                    target_table_name = first_arg
+                    remaining_args = args[1:]
+                    break
+    
+    # 如果指定了表名，切换到该表
+    if target_table_name:
+        result = use_table(client, session, target_table_name)
+        if result != 0:
+            return result
         table_id = session.get_current_table_id()
         table_name = session.get_current_table()
-        
+    elif not session.is_table_selected():
+        print("错误: 请先选择表格", file=sys.stderr)
+        return 1
+    else:
+        table_id = session.get_current_table_id()
+        table_name = session.get_current_table()
+    
+    try:
         from .pipe_core import is_pipe_input, is_pipe_output
+        
+        # 管道输出模式：优先检查，如果输出到管道，使用流式输出
+        if is_pipe_output():
+            return show_pipe_mode(client, session, remaining_args, table_id, table_name)
         
         # 管道输入模式（关联查询）：有管道输入且有where条件
         if is_pipe_input():
@@ -51,17 +81,13 @@ def show_current_table(client, session, args: list):
             has_where = any(
                 arg.lower() == 'where' or 
                 ('=' in arg and not arg.lower().startswith(('limit=', 'order=')))
-                for arg in args
+                for arg in remaining_args
             )
             if has_where:
-                return show_pipe_input_mode(client, session, args, table_id, table_name)
-        
-        # 管道输出模式：输出到管道
-        if is_pipe_output():
-            return show_pipe_mode(client, session, args, table_id, table_name)
+                return show_pipe_input_mode(client, session, remaining_args, table_id, table_name)
         
         # 终端显示模式
-        return show_table_mode(client, session, args, table_id, table_name)
+        return show_table_mode(client, session, remaining_args, table_id, table_name)
         
     except Exception as e:
         print(f"错误: 显示表格数据失败: {e}", file=sys.stderr)
@@ -122,15 +148,30 @@ def show_pipe_input_mode(client, session, args: list, table_id: str, table_name:
         # 从管道流式读取记录
         try:
             # 使用迭代器读取，避免阻塞
-            import select
             import sys
             
-            # 先检查是否有数据可读
-            readable, _, _ = select.select([sys.stdin], [], [], 0.1)
-            if not readable:
-                # 没有数据，回退到正常模式
+            # 尝试读取第一行，如果没有数据或读取失败，回退到正常模式
+            try:
+                first_line = sys.stdin.readline()
+                logger.info(f"管道输入模式：读取第一行: {repr(first_line)}")
+                if not first_line or not first_line.strip():
+                    # 没有数据，回退到正常模式
+                    logger.info("管道输入模式：没有数据，回退到正常模式")
+                    return show_table_mode(client, session, args, table_id, table_name)
+            except Exception as e:
+                # 读取失败，回退到正常模式
+                logger.info(f"管道输入模式：读取失败，回退到正常模式: {e}")
                 return show_table_mode(client, session, args, table_id, table_name)
             
+            # 先处理第一行
+            pipe_record = parse_pipe_input_line(first_line)
+            if pipe_record:
+                found_count = _process_show_pipe_input(client, table_id, pipe_record, 
+                                                      where_conditions, fields, limit, 
+                                                      order_by, order_direction)
+                total_found += found_count
+            
+            # 继续读取剩余行
             for line in sys.stdin:
                 pipe_record = parse_pipe_input_line(line)
                 if pipe_record:
