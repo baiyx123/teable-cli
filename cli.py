@@ -21,6 +21,9 @@ from commands import (
     insert_record, update_record, delete_record
 )
 
+# 版本号
+__version__ = "0.1.0"
+
 
 class TeableCLI:
     """Teable CLI 主类"""
@@ -67,6 +70,7 @@ class TeableCLI:
             'insert': self._handle_insert,
             'update': self._handle_update,
             'delete': self._handle_delete,
+            'version': self._handle_version,
         }
         
         handler = commands.get(command)
@@ -139,6 +143,11 @@ class TeableCLI:
             return 1
         
         return delete_record(self.client, self.session, args)
+    
+    def _handle_version(self, args: list):
+        """处理版本命令"""
+        print(f"teable-cli version {__version__}")
+        return 0
 
 
 # Click命令行接口

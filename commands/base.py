@@ -26,6 +26,7 @@ Teable CLI - 命令行界面工具
   delete    删除记录
   help      显示帮助信息
   status    显示会话状态
+  version   显示版本信息
 
 配置命令:
   t config --token YOUR_TOKEN --base YOUR_BASE_ID
