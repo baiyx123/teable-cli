@@ -10,6 +10,7 @@ from teable_api_client import (
     create_field_config, 
     create_link_field_config,
     create_lookup_field_config,
+    create_formula_field_config,
     SUPPORTED_FIELD_TYPES,
     LINK_FIELD_TYPES
 )
@@ -58,16 +59,35 @@ def add_field_command(client, session, args: list):
         print("错误: 无法连接到Teable服务")
         return 1
     
+    # 检查是否指定了表名（第一个参数可能是表名）
+    # 只有当第一个参数是表名且后面还有至少2个参数（字段名和字段类型），且第二个参数不是表名时，才认为是表名
+    if len(args) >= 3:
+        tables = client.get_tables()
+        table_names = [t.get('name') for t in tables]
+        
+        # 如果第一个参数是表名，第二个参数不是表名，且第三个参数是字段类型，则认为是表名
+        # 这样可以避免表达式中的表名被误判
+        if (args[0] in table_names and 
+            args[1] not in table_names and 
+            args[2].lower() in ['formula', 'link', 'lookup'] + [t.lower() for t in SUPPORTED_FIELD_TYPES]):
+            table_name_arg = args[0]
+            args = args[1:]  # 移除表名参数
+            # 临时切换表
+            from .table_common import use_table
+            use_table(client, session, table_name_arg)
+    
     if not session.is_table_selected():
         print("错误: 请先选择表格")
         print("使用: t use 表格名称")
+        print("或: t alter add <表名> <字段名> <字段类型> [选项...]")
         return 1
     
     if len(args) < 2:
         print("错误: 参数不足")
-        print("使用: t alter add <字段名> <字段类型> [选项...]")
-        print("使用: t alter add <字段名> link <关联关系> <目标表名>")
-        print("使用: t alter add <字段名> lookup <关联字段名> <引用字段名>")
+        print("使用: t alter add [表名] <字段名> <字段类型> [选项...]")
+        print("使用: t alter add [表名] <字段名> link <关联关系> <目标表名>")
+        print("使用: t alter add [表名] <字段名> lookup <关联字段名> <引用字段名>")
+        print("使用: t alter add [表名] <字段名> formula <表达式>")
         print("使用: t help alter 查看详细帮助")
         return 1
     
@@ -170,6 +190,37 @@ def add_field_command(client, session, args: list):
             if foreign_table_name:
                 print(f"   目标表: {foreign_table_name}")
         
+        # 处理公式字段
+        elif field_type == 'formula':
+            if len(args) < 3:
+                print("错误: 公式字段需要指定表达式")
+                print("使用: t alter add <字段名> formula <表达式>")
+                print("示例: t alter add 总价 formula \"{单价} * {数量}\"")
+                print("示例: t alter add 订单号显示 formula \"{订单号} + 5000000000\"")
+                return 1
+            
+            expression = ' '.join(args[2:])  # 支持表达式中包含空格
+            
+            # 获取当前表的字段，将表达式中的字段名替换为字段ID
+            current_fields = client.get_table_fields(table_id)
+            field_name_to_id = {f['name']: f['id'] for f in current_fields}
+            
+            # 将表达式中的字段名替换为字段ID
+            # 注意：使用 fn 作为循环变量，避免覆盖外层的 field_name
+            for fn, field_id in field_name_to_id.items():
+                # 替换 {字段名} 为 { 字段ID }
+                expression = expression.replace(f'{{{fn}}}', f'{{ {field_id} }}')
+                expression = expression.replace(f'{{ {fn} }}', f'{{ {field_id} }}')
+            
+            # 创建公式字段配置
+            field_config = create_formula_field_config(
+                name=field_name,
+                expression=expression
+            )
+            
+            print(f"正在添加公式字段 '{field_name}' 到表格 '{table_name}'...")
+            print(f"   表达式: {expression}")
+        
         # 处理关联字段
         elif field_type == 'link':
             if len(args) < 4:
@@ -245,6 +296,8 @@ def add_field_command(client, session, args: list):
             print(f"   引用字段: {lookup_field_name} (类型: {lookup_field_type})")
             if foreign_table_name:
                 print(f"   目标表: {foreign_table_name}")
+        elif field_type == 'formula':
+            print(f"   表达式: {expression}")
         
         logger.info(f"字段添加成功: {field_name} ({field_type})")
         return 0

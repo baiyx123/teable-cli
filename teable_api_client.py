@@ -554,12 +554,33 @@ class TeableClient:
         logger.info(f"转换字段 {field_id} 为公式字段，表达式: {expression}")
         
         try:
+            # 构建完整URL，确保包含/api前缀
+            if endpoint.startswith('/api'):
+                url = f"{self.base_url}{endpoint}"
+            else:
+                url = f"{self.base_url}/api{endpoint}"
+            
+            logger.debug(f"转换字段请求URL: {url}")
+            logger.debug(f"转换字段请求数据: {json.dumps(data, ensure_ascii=False, indent=2)}")
+            
+            # 尝试使用PATCH方法（类似update_record）
+            # 如果PUT不行，可以尝试PATCH
             response = requests.put(
-                url=f"{self.base_url}{endpoint}",
+                url=url,
                 headers=headers,
                 json=data,
                 timeout=30
             )
+            
+            # 如果PUT返回404，尝试PATCH
+            if response.status_code == 404:
+                logger.info("PUT方法返回404，尝试使用PATCH方法")
+                response = requests.patch(
+                    url=url,
+                    headers=headers,
+                    json=data,
+                    timeout=30
+                )
             
             logger.info(f"响应状态码: {response.status_code}")
             
