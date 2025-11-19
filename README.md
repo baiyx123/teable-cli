@@ -104,10 +104,17 @@ t create 订单表 订单号:singleLineText 关联客户:link:manyOne:客户表
 
 # 创建带公式字段的表
 t create 订单明细表 单价:number 数量:number 总价:formula:{单价} * {数量}
+
+# 创建带精度的数字字段（整数）
+t create 订单表 订单号:singleLineText 数量:number:0
+
+# 创建带精度的数字字段（2位小数）
+t create 订单表 订单号:singleLineText 金额:number:2
 ```
 
 **字段定义格式：**
 - `<字段名>:<字段类型>` - 普通字段
+- `<字段名>:number:<精度>` - 数字字段（精度为小数位数，0表示整数，默认精度为2）
 - `<字段名>:link:<关联关系>:<目标表名>` - 关联字段
 - `<字段名>:formula:<表达式>` - 公式字段（表达式使用 `{字段名}` 引用其他字段）
 
@@ -159,7 +166,9 @@ t fields 订单表
 ```bash
 # 添加普通字段
 t alter add 备注 longText
-t alter add 金额 number
+t alter add 金额 number          # 默认精度2
+t alter add 数量 number 0        # 整数
+t alter add 金额 number 2        # 2位小数
 t alter add 是否启用 checkbox
 
 # 添加关联字段
@@ -176,6 +185,11 @@ t alter add 订单表 未收金额 formula "{订单金额} - {已收金额}"
 
 # 添加编号格式化公式字段（引用autoNumber字段）
 t alter add 订单表 订单号显示 formula "{订单号} + 5000000000"
+
+# 修改number字段的精度
+t alter modify 订单金额 precision 0    # 修改为整数
+t alter modify 订单金额 precision 2    # 修改为2位小数
+t alter modify 订单表 订单金额 precision 0    # 指定表名
 ```
 
 **字段类型转换说明：**
@@ -183,6 +197,12 @@ t alter add 订单表 订单号显示 formula "{订单号} + 5000000000"
 - 如果不指定表名，则使用当前选中的表
 - 公式字段表达式中的字段名会自动替换为对应的字段ID
 - 支持引用autoNumber字段进行编号格式化
+
+**number字段精度设置：**
+- 创建表时：`金额:number:2` 表示2位小数，`数量:number:0` 表示整数
+- 添加字段时：`t alter add 金额 number 2` 表示2位小数，`t alter add 数量 number 0` 表示整数
+- 修改精度：`t alter modify 订单金额 precision 0` 将精度修改为0（整数）
+- 默认精度：如果不指定精度，number字段默认精度为2位小数
 
 ### 关联字段支持
 
@@ -555,6 +575,15 @@ t show 注册时间>2024-01-01 | grep "活跃度=高" | head -100 | t update 标
    - 避免在大量数据上使用模糊匹配
 
 ## 更新日志
+
+### v1.3.1
+- **新增number字段精度设置功能**
+  - 创建表时支持指定精度：`金额:number:2`（2位小数）或 `数量:number:0`（整数）
+  - 添加字段时支持指定精度：`t alter add 金额 number 2`
+  - 新增修改字段精度命令：`t alter modify <字段名> precision <精度>`
+  - 支持指定表名：`t alter modify <表名> <字段名> precision <精度>`
+  - 默认精度为2位小数（如果未指定）
+  - 使用convert API更新字段精度，确保数据一致性
 
 ### v1.3.0
 - **新增表格创建功能** (`t create`)

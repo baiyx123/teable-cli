@@ -599,6 +599,138 @@ class TeableClient:
             logger.error(f"JSON 解析错误: {e}")
             raise
 
+    def update_field_formatting(self, table_id: str, field_id: str, formatting: Dict[str, Any],
+                               window_id: Optional[str] = None) -> Dict:
+        """
+        更新字段的格式化配置（主要用于formula字段）
+        
+        Args:
+            table_id: 表格 ID
+            field_id: 字段 ID
+            formatting: 格式化选项，例如 {"precision": 0, "type": "decimal"} 表示整数
+            window_id: 窗口 ID（可选）
+            
+        Returns:
+            更新结果
+        """
+        # 先获取字段的当前配置
+        fields = self.get_table_fields(table_id)
+        current_field = None
+        for field in fields:
+            if field.get('id') == field_id:
+                current_field = field
+                break
+        
+        if not current_field:
+            raise Exception(f"字段 {field_id} 不存在")
+        
+        if current_field.get('type') != 'formula':
+            raise Exception(f"字段 {field_id} 不是formula类型，无法更新formatting")
+        
+        # 获取当前的options
+        current_options = current_field.get('options', {})
+        expression = current_options.get('expression')
+        time_zone = current_options.get('timeZone', 'Asia/Shanghai')
+        
+        # 使用convert API来更新formatting（这是更新formula字段formatting的正确方式）
+        logger.info(f"更新字段 {field_id} 的格式化配置: {formatting}")
+        
+        return self.convert_field_to_formula(
+            table_id=table_id,
+            field_id=field_id,
+            expression=expression,
+            time_zone=time_zone,
+            formatting=formatting,
+            window_id=window_id
+        )
+
+    def update_number_field_precision(self, table_id: str, field_id: str, precision: int,
+                                     window_id: Optional[str] = None) -> Dict:
+        """
+        更新number字段的精度（使用convert API）
+        
+        Args:
+            table_id: 表格 ID
+            field_id: 字段 ID
+            precision: 精度（小数位数），0表示整数
+            window_id: 窗口 ID（可选）
+            
+        Returns:
+            更新结果
+        """
+        # 先获取字段的当前配置
+        fields = self.get_table_fields(table_id)
+        current_field = None
+        for field in fields:
+            if field.get('id') == field_id:
+                current_field = field
+                break
+        
+        if not current_field:
+            raise Exception(f"字段 {field_id} 不存在")
+        
+        if current_field.get('type') != 'number':
+            raise Exception(f"字段 {field_id} 不是number类型，无法更新精度")
+        
+        # 获取当前的options（如果有）
+        current_options = current_field.get('options', {})
+        current_formatting = current_options.get('formatting', {})
+        
+        # 使用convert API更新精度
+        endpoint = f"/table/{table_id}/field/{field_id}/convert"
+        
+        headers = self.headers.copy()
+        if window_id:
+            headers['x-window-id'] = window_id
+        
+        # 构建convert请求数据
+        data = {
+            "type": "number",
+            "options": {
+                "formatting": {
+                    "type": current_formatting.get('type', 'decimal'),
+                    "precision": precision
+                }
+            }
+        }
+        
+        logger.info(f"更新字段 {field_id} 的精度为 {precision}")
+        
+        try:
+            # 构建完整URL，确保包含/api前缀
+            if endpoint.startswith('/api'):
+                url = f"{self.base_url}{endpoint}"
+            else:
+                url = f"{self.base_url}/api{endpoint}"
+            
+            logger.debug(f"更新字段精度请求URL: {url}")
+            logger.debug(f"更新字段精度请求数据: {json.dumps(data, ensure_ascii=False, indent=2)}")
+            
+            # 使用PUT方法调用convert API
+            response = requests.put(
+                url=url,
+                headers=headers,
+                json=data,
+                timeout=30
+            )
+            
+            logger.info(f"响应状态码: {response.status_code}")
+            
+            if response.status_code >= 400:
+                logger.error(f"字段精度更新失败: {response.status_code} - {response.text}")
+                response.raise_for_status()
+            
+            result = response.json()
+            logger.debug(f"更新结果: {json.dumps(result, ensure_ascii=False, indent=2)}")
+            return result
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"字段精度更新请求异常: {e}")
+            raise
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON 解析错误: {e}")
+            raise
+
 
 # 支持的字段类型
 SUPPORTED_FIELD_TYPES = [

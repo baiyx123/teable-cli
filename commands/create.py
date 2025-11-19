@@ -26,6 +26,7 @@ def create_table_command(client, session, args: list):
     
     字段定义格式:
         <字段名>:<字段类型>                    - 普通字段
+        <字段名>:number:<精度>                 - 数字字段（精度为小数位数，0表示整数）
         <字段名>:link:<关联关系>:<目标表名>      - 关联字段（需要目标表已存在）
         <字段名>:formula:<表达式>              - 公式字段（表达式使用 {字段名} 引用其他字段）
     
@@ -57,6 +58,12 @@ def create_table_command(client, session, args: list):
         
         # 创建带描述的表
         t create 订单表 --desc "订单信息表" 订单号:singleLineText 金额:number
+        
+        # 创建带精度的数字字段（整数）
+        t create 订单表 订单号:singleLineText 数量:number:0
+        
+        # 创建带精度的数字字段（2位小数）
+        t create 订单表 订单号:singleLineText 金额:number:2
         
         # 创建带关联字段的表（需要先有客户表）
         t create 订单表 订单号:singleLineText 关联客户:link:manyOne:客户表
@@ -195,6 +202,46 @@ def create_table_command(client, session, args: list):
                 })
                 print(f"  ⚠ 字段: {field_name} (formula) - 将在表创建后添加")
             
+            # 处理number字段（支持精度参数）
+            elif field_type == 'number':
+                field_config = create_field_config(
+                    name=field_name,
+                    field_type=field_type_raw  # 使用原始大小写
+                )
+                
+                # 检查是否有精度参数
+                if len(parts) >= 3:
+                    precision_str = parts[2]
+                    # 支持两种格式: precision=2 或直接数字 2
+                    if '=' in precision_str:
+                        # precision=2 格式
+                        precision_value = precision_str.split('=')[1].strip()
+                    else:
+                        # 直接数字格式
+                        precision_value = precision_str.strip()
+                    
+                    try:
+                        precision = int(precision_value)
+                        field_config['options'] = {
+                            'formatting': {
+                                'type': 'decimal',
+                                'precision': precision
+                            }
+                        }
+                        print(f"  ✓ 字段: {field_name} (number, 精度={precision})")
+                    except ValueError:
+                        print(f"  ⚠ 警告: 无效的精度值 '{precision_value}'，使用默认精度")
+                        fields.append(field_config)
+                else:
+                    # 默认精度为2
+                    field_config['options'] = {
+                        'formatting': {
+                            'type': 'decimal',
+                            'precision': 2
+                        }
+                    }
+                    fields.append(field_config)
+            
             # 处理带选项的字段（singleSelect, multipleSelect）
             elif field_type in ['singleselect', 'multipleselect']:
                 if len(parts) >= 3:
@@ -222,7 +269,7 @@ def create_table_command(client, session, args: list):
                 else:
                     print(f"  ✓ 字段: {field_name} ({field_type_raw})")
             
-            # 处理普通字段
+            # 处理普通字段（number已经在上面单独处理了）
             else:
                 # 验证字段类型（使用原始大小写）
                 if field_type_raw not in SUPPORTED_FIELD_TYPES:
