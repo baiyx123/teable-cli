@@ -85,7 +85,9 @@ class TeableClient:
         except requests.exceptions.HTTPError as e:
             logger.error(f"请求异常: {e}")
             logger.error(f"请求失败: {response.status_code} - {response.text}")
-            raise
+            # 将响应文本附加到异常消息中，方便调试
+            error_detail = f"{e}\n响应内容: {response.text}"
+            raise requests.exceptions.HTTPError(error_detail, response=response)
         except requests.exceptions.ConnectionError as e:
             logger.error(f"网络连接错误: {e}")
             raise
@@ -731,6 +733,61 @@ class TeableClient:
             logger.error(f"JSON 解析错误: {e}")
             raise
 
+    def update_field_properties(self, table_id: str, field_id: str, 
+                                unique: Optional[bool] = None,
+                                not_null: Optional[bool] = None) -> Dict:
+        """
+        更新字段的属性（唯一性约束和必填）
+        
+        Args:
+            table_id: 表格 ID
+            field_id: 字段 ID
+            unique: 是否唯一（None 表示不修改）
+            not_null: 是否必填（None 表示不修改）
+            
+        Returns:
+            更新结果
+        """
+        # 构建更新数据
+        update_data = {}
+        if unique is not None:
+            update_data['unique'] = unique
+        if not_null is not None:
+            update_data['notNull'] = not_null
+        
+        if not update_data:
+            raise ValueError("至少需要指定一个要更新的属性（unique 或 notNull）")
+        
+        logger.info(f"更新字段 {field_id} 的属性: {update_data}")
+        endpoint = f"/table/{table_id}/field/{field_id}"
+        
+        try:
+            url = f"{self.base_url}/api{endpoint}"
+            response = requests.patch(
+                url=url,
+                headers=self.headers,
+                json=update_data,
+                timeout=30
+            )
+            
+            logger.info(f"响应状态码: {response.status_code}")
+            
+            if response.status_code >= 400:
+                logger.error(f"字段属性更新失败: {response.status_code} - {response.text}")
+                response.raise_for_status()
+            
+            # PATCH 可能返回空响应（204）
+            if response.status_code == 204 or not response.text.strip():
+                return {}
+            
+            result = response.json()
+            logger.debug(f"更新结果: {json.dumps(result, ensure_ascii=False, indent=2)}")
+            return result
+            
+        except requests.exceptions.RequestException as e:
+            logger.error(f"字段属性更新请求异常: {e}")
+            raise
+
 
 # 支持的字段类型
 SUPPORTED_FIELD_TYPES = [
@@ -766,13 +823,16 @@ UNSUPPORTED_FIELD_TYPES = [
 ]
 
 
-def create_field_config(name: str, field_type: str, **kwargs) -> Dict[str, Any]:
+def create_field_config(name: str, field_type: str, unique: Optional[bool] = None,
+                       not_null: Optional[bool] = None, **kwargs) -> Dict[str, Any]:
     """
     创建字段配置的辅助函数
     
     Args:
         name: 字段名称
         field_type: 字段类型
+        unique: 是否唯一（可选）
+        not_null: 是否必填（可选）
         **kwargs: 其他字段属性
         
     Returns:
@@ -785,6 +845,12 @@ def create_field_config(name: str, field_type: str, **kwargs) -> Dict[str, Any]:
         "name": name,
         "type": field_type
     }
+    
+    # 添加唯一性和必填属性
+    if unique is not None:
+        config['unique'] = unique
+    if not_null is not None:
+        config['notNull'] = not_null
     
     # 添加其他属性
     for key, value in kwargs.items():

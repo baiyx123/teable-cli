@@ -42,7 +42,9 @@ def detect_link_fields(client, table_id: str) -> Dict[str, Dict[str, Any]]:
 
 
 def find_linked_record(client, foreign_table_id: str, identifier: str) -> Optional[Dict[str, Any]]:
-    """查找关联记录，支持精确匹配和模糊匹配"""
+    """查找关联记录，支持精确匹配和模糊匹配
+    使用前两个列进行查找，提高匹配准确性
+    """
     # 1. 尝试作为记录ID查询 - 直接使用get_record API
     try:
         if identifier.startswith('rec'):
@@ -54,27 +56,59 @@ def find_linked_record(client, foreign_table_id: str, identifier: str) -> Option
         # 注意: 此处仅在identifier不以'rec'开头时执行
         pass
     
-    # 2. 使用filter进行模糊查询 - 使用第一列字段进行匹配
-    # 先获取表格字段信息，找到第一个非系统字段
+    # 2. 使用filter进行模糊查询 - 使用前两个列字段进行匹配
+    # 先获取表格字段信息，找到前两个非系统字段（包括所有类型）
     try:
         fields = client.get_table_fields(foreign_table_id)
-        first_field = None
+        candidate_fields = []
         for field in fields:
             field_name = field.get('name', '')
             field_type = field.get('type', '')
             # 跳过系统字段和关联字段
             if field_name not in ['id', 'createdTime', 'updatedTime', 'createdBy', 'updatedBy'] and field_type != 'link':
-                first_field = field_name
-                break
+                candidate_fields.append({
+                    'name': field_name,
+                    'type': field_type
+                })
+                if len(candidate_fields) >= 2:
+                    break
         
-        if first_field:
-            # 使用第一列字段进行模糊匹配
-            records_data = client.get_records(foreign_table_id, filter=json.dumps({
-                "conjunction": "and",
-                "filterSet": [
-                    {"fieldId": first_field, "operator": "contains", "value": identifier}
-                ]
-            }))
+        if candidate_fields:
+            # 使用前两个列字段进行匹配（OR关系，只要有一个匹配即可）
+            filter_set = []
+            for field_info in candidate_fields:
+                field_name = field_info['name']
+                field_type = field_info['type']
+                
+                # 根据字段类型选择合适的操作符
+                if field_type == 'autoNumber':
+                    # autoNumber 字段使用 is 操作符（精确匹配）
+                    try:
+                        # 尝试将 identifier 转换为数字
+                        num_value = int(identifier)
+                        filter_set.append({"fieldId": field_name, "operator": "is", "value": num_value})
+                    except ValueError:
+                        # 如果不是数字，跳过这个字段
+                        pass
+                elif field_type in ['singleLineText', 'longText']:
+                    # 文本字段使用 contains 进行模糊匹配
+                    filter_set.append({"fieldId": field_name, "operator": "contains", "value": identifier})
+                elif field_type == 'formula':
+                    # formula 字段可能显示为文本，尝试 contains 匹配
+                    filter_set.append({"fieldId": field_name, "operator": "contains", "value": identifier})
+                elif field_type in ['singleSelect', 'multipleSelect']:
+                    # 选择字段使用 is 操作符（精确匹配）
+                    filter_set.append({"fieldId": field_name, "operator": "is", "value": identifier})
+            
+            if filter_set:
+                # 使用 OR 关系，只要有一个字段匹配即可
+                records_data = client.get_records(foreign_table_id, filter=json.dumps({
+                    "conjunction": "or",
+                    "filterSet": filter_set
+                }))
+            else:
+                # 如果没有有效的过滤条件，返回空
+                return None
         else:
             # 如果没有合适的字段，只尝试ID匹配
             records_data = client.get_records(foreign_table_id, filter=json.dumps({
@@ -94,6 +128,7 @@ def find_linked_record(client, foreign_table_id: str, identifier: str) -> Option
             return records
             
     except Exception as e:
+        logger.error(f"查找关联记录失败: {e}")
         # 如果获取字段信息失败，返回None
         return None
 
@@ -392,7 +427,6 @@ def convert_field_value(field_type: str, value: Any) -> Any:
             return value
         if isinstance(value, str):
             return [v.strip() for v in value.split(',')]
-        return value
         return value
     return value
 

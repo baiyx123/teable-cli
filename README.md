@@ -73,13 +73,23 @@ t fields [表名]
 
 # 修改表格结构（添加字段）
 t alter add [表名] <字段名> <字段类型> [选项...]
+t alter add [表名] <字段名> <字段类型> unique [required]
+t alter add [表名] <字段名> <字段类型> required
 t alter add [表名] <字段名> link <关联关系> <目标表名>
 t alter add [表名] <字段名> lookup <关联字段名> <引用字段名>
 t alter add [表名] <字段名> formula <表达式>
 
+# 修改字段属性
+t alter modify [表名] <字段名> unique <true|false>
+t alter modify [表名] <字段名> required <true|false>
+t alter modify [表名] <字段名> precision <精度>
+
 # 示例：指定表名添加字段
 t alter add 订单表 未收金额 formula "{订单金额} - {已收金额}"
 t alter add 订单表 客户名称 lookup 关联客户 客户名称
+t alter add 订单表 用户名 singleLineText unique
+t alter add 订单表 邮箱 singleLineText unique required
+t alter add 订单表 产品编号 number 0 unique
 
 # 查看版本
 t version
@@ -110,11 +120,27 @@ t create 订单表 订单号:singleLineText 数量:number:0
 
 # 创建带精度的数字字段（2位小数）
 t create 订单表 订单号:singleLineText 金额:number:2
+
+# 创建带唯一约束的字段
+t create 用户表 用户名:singleLineText:unique 邮箱:singleLineText:unique
+
+# 创建必填字段
+t create 订单表 订单号:singleLineText:required 客户名称:singleLineText:required
+
+# 创建唯一且必填的字段
+t create 车辆表 车牌号:singleLineText:unique:required
+
+# 创建带唯一约束的数字字段
+t create 产品表 产品编号:number:0:unique
 ```
 
 **字段定义格式：**
 - `<字段名>:<字段类型>` - 普通字段
+- `<字段名>:<字段类型>:unique` - 带唯一约束的字段
+- `<字段名>:<字段类型>:required` - 必填字段
+- `<字段名>:<字段类型>:unique:required` - 唯一且必填的字段
 - `<字段名>:number:<精度>` - 数字字段（精度为小数位数，0表示整数，默认精度为2）
+- `<字段名>:number:<精度>:unique` - 带唯一约束的数字字段
 - `<字段名>:link:<关联关系>:<目标表名>` - 关联字段
 - `<字段名>:formula:<表达式>` - 公式字段（表达式使用 `{字段名}` 引用其他字段）
 
@@ -171,6 +197,12 @@ t alter add 数量 number 0        # 整数
 t alter add 金额 number 2        # 2位小数
 t alter add 是否启用 checkbox
 
+# 添加带唯一约束的字段
+t alter add 用户名 singleLineText unique
+t alter add 邮箱 singleLineText unique required  # 唯一且必填
+t alter add 客户名称 singleLineText required     # 必填字段
+t alter add 产品编号 number 0 unique             # 唯一数字字段
+
 # 添加关联字段
 t alter add 关联客户 link manyOne 客户表
 
@@ -186,9 +218,13 @@ t alter add 订单表 未收金额 formula "{订单金额} - {已收金额}"
 # 添加编号格式化公式字段（引用autoNumber字段）
 t alter add 订单表 订单号显示 formula "{订单号} + 5000000000"
 
-# 修改number字段的精度
-t alter modify 订单金额 precision 0    # 修改为整数
-t alter modify 订单金额 precision 2    # 修改为2位小数
+# 修改字段属性
+t alter modify 订单金额 precision 0    # 修改精度为整数
+t alter modify 订单金额 precision 2    # 修改精度为2位小数
+t alter modify 用户名 unique true       # 设置唯一约束
+t alter modify 用户名 unique false      # 取消唯一约束
+t alter modify 邮箱 required true       # 设置必填
+t alter modify 邮箱 required false      # 取消必填
 t alter modify 订单表 订单金额 precision 0    # 指定表名
 ```
 
@@ -203,6 +239,15 @@ t alter modify 订单表 订单金额 precision 0    # 指定表名
 - 添加字段时：`t alter add 金额 number 2` 表示2位小数，`t alter add 数量 number 0` 表示整数
 - 修改精度：`t alter modify 订单金额 precision 0` 将精度修改为0（整数）
 - 默认精度：如果不指定精度，number字段默认精度为2位小数
+
+**唯一约束和必填字段：**
+- ⚠️ **重要提示**：根据 Teable API 文档，目前 Teable API **不支持**通过 API/CLI 设置字段的唯一性约束和必填属性。这些属性需要通过 Teable Web 界面手动设置。
+- CLI 命令支持语法，但实际不会生效：
+  - `t create 用户表 用户名:singleLineText:unique` - 语法支持，但 unique 不会生效
+  - `t alter add 用户名 singleLineText unique` - 语法支持，但 unique 不会生效
+  - `t alter modify 用户名 unique true` - 语法支持，但修改不会生效
+- 主键字段（`isPrimary: true`）自动具有唯一性和必填属性
+- 建议：如需设置唯一约束和必填属性，请通过 Teable Web 界面操作
 
 ### 关联字段支持
 
@@ -575,6 +620,15 @@ t show 注册时间>2024-01-01 | grep "活跃度=高" | head -100 | t update 标
    - 避免在大量数据上使用模糊匹配
 
 ## 更新日志
+
+### v1.3.2 (2025-11-19)
+- **新增唯一约束和必填字段支持**
+  - `t create` 命令支持 `:unique` 和 `:required` 后缀
+  - `t alter add` 命令支持 `unique` 和 `required` 关键字
+  - 新增 `t alter modify <字段名> unique <true|false>` 命令修改唯一约束
+  - 新增 `t alter modify <字段名> required <true|false>` 命令修改必填属性
+  - 唯一约束确保字段值在表中唯一，插入重复值会失败
+  - 必填字段确保插入记录时必须提供值，否则会失败
 
 ### v1.3.1
 - **新增number字段精度设置功能**

@@ -89,7 +89,7 @@ for i in {1..20}; do
     # 使用 insert | insert 管道：先插入货物明细，然后管道到订单表
     RESULT=$(t insert 货物明细表 "货物名称=订单${i}_货物" "毛重=$WEIGHT" "关联产品=$PRODUCT" | \
              t insert 订单表 "货物明细表=@id" "委托时间=$DELEGATE_DATE" "要求到达时间=$ARRIVE_DATE" \
-             "订单状态=待接单" "关联客户=$CUSTOMER" "提货地址=$PICKUP_ADDR" "送货地址=$DELIVERY_ADDR")
+             "订单状态=待接单" "关联客户=$CUSTOMER" "起运地址=$PICKUP_ADDR" "目的地地址=$DELIVERY_ADDR")
     
     # 检查是否成功
     if echo "$RESULT" | grep -q "✅ 成功插入记录"; then

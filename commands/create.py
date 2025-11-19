@@ -26,7 +26,11 @@ def create_table_command(client, session, args: list):
     
     字段定义格式:
         <字段名>:<字段类型>                    - 普通字段
+        <字段名>:<字段类型>:unique             - 带唯一约束的字段
+        <字段名>:<字段类型>:required           - 必填字段
+        <字段名>:<字段类型>:unique:required    - 唯一且必填的字段
         <字段名>:number:<精度>                 - 数字字段（精度为小数位数，0表示整数）
+        <字段名>:number:<精度>:unique          - 带唯一约束的数字字段
         <字段名>:link:<关联关系>:<目标表名>      - 关联字段（需要目标表已存在）
         <字段名>:formula:<表达式>              - 公式字段（表达式使用 {字段名} 引用其他字段）
     
@@ -56,14 +60,26 @@ def create_table_command(client, session, args: list):
         # 创建简单表
         t create 测试表 姓名:singleLineText 年龄:number
         
+        # 创建带唯一约束的字段
+        t create 用户表 用户名:singleLineText:unique 邮箱:singleLineText:unique
+        
+        # 创建必填字段
+        t create 订单表 订单号:singleLineText:required 客户名称:singleLineText:required
+        
+        # 创建唯一且必填的字段
+        t create 车辆表 车牌号:singleLineText:unique:required
+        
         # 创建带描述的表
-        t create 订单表 --desc "订单信息表" 订单号:singleLineText 金额:number
+        t create 订单表 --desc "订单信息表" 订单号:singleLineText:unique 金额:number
         
         # 创建带精度的数字字段（整数）
         t create 订单表 订单号:singleLineText 数量:number:0
         
         # 创建带精度的数字字段（2位小数）
         t create 订单表 订单号:singleLineText 金额:number:2
+        
+        # 创建带唯一约束的数字字段
+        t create 产品表 产品编号:number:0:unique
         
         # 创建带关联字段的表（需要先有客户表）
         t create 订单表 订单号:singleLineText 关联客户:link:manyOne:客户表
@@ -139,6 +155,17 @@ def create_table_command(client, session, args: list):
             field_type_raw = parts[1]
             field_type = field_type_raw.lower()  # 用于比较
             
+            # 解析 unique 和 required 标志（可能在最后）
+            is_unique = False
+            is_required = False
+            # 检查最后几个部分是否有 unique 或 required
+            for part in parts[2:]:
+                part_lower = part.lower()
+                if part_lower == 'unique':
+                    is_unique = True
+                elif part_lower == 'required':
+                    is_required = True
+            
             # 处理关联字段
             if field_type == 'link':
                 if len(parts) < 4:
@@ -204,43 +231,49 @@ def create_table_command(client, session, args: list):
             
             # 处理number字段（支持精度参数）
             elif field_type == 'number':
-                field_config = create_field_config(
-                    name=field_name,
-                    field_type=field_type_raw  # 使用原始大小写
-                )
-                
-                # 检查是否有精度参数
+                # 检查是否有精度参数（排除 unique 和 required）
+                precision = None
                 if len(parts) >= 3:
                     precision_str = parts[2]
-                    # 支持两种格式: precision=2 或直接数字 2
-                    if '=' in precision_str:
-                        # precision=2 格式
-                        precision_value = precision_str.split('=')[1].strip()
-                    else:
-                        # 直接数字格式
-                        precision_value = precision_str.strip()
-                    
-                    try:
-                        precision = int(precision_value)
-                        field_config['options'] = {
-                            'formatting': {
-                                'type': 'decimal',
-                                'precision': precision
-                            }
-                        }
-                        print(f"  ✓ 字段: {field_name} (number, 精度={precision})")
-                    except ValueError:
-                        print(f"  ⚠ 警告: 无效的精度值 '{precision_value}'，使用默认精度")
-                        fields.append(field_config)
-                else:
-                    # 默认精度为2
-                    field_config['options'] = {
+                    # 如果第二部分是 unique 或 required，则没有精度参数
+                    if precision_str.lower() not in ['unique', 'required']:
+                        # 支持两种格式: precision=2 或直接数字 2
+                        if '=' in precision_str:
+                            # precision=2 格式
+                            precision_value = precision_str.split('=')[1].strip()
+                        else:
+                            # 直接数字格式
+                            precision_value = precision_str.strip()
+                        
+                        try:
+                            precision = int(precision_value)
+                        except ValueError:
+                            print(f"  ⚠ 警告: 无效的精度值 '{precision_value}'，使用默认精度")
+                
+                # 默认精度为2（如果没有指定）
+                if precision is None:
+                    precision = 2
+                
+                # 注意：Teable API 不支持在创建字段时设置 unique 和 notNull
+                field_config = create_field_config(
+                    name=field_name,
+                    field_type=field_type_raw,  # 使用原始大小写
+                    options={
                         'formatting': {
                             'type': 'decimal',
-                            'precision': 2
+                            'precision': precision
                         }
                     }
-                    fields.append(field_config)
+                )
+                fields.append(field_config)
+                
+                attrs = []
+                attrs.append(f"精度={precision}")
+                if is_unique:
+                    attrs.append("唯一")
+                if is_required:
+                    attrs.append("必填")
+                print(f"  ✓ 字段: {field_name} (number, {', '.join(attrs)})")
             
             # 处理带选项的字段（singleSelect, multipleSelect）
             elif field_type in ['singleselect', 'multipleselect']:
@@ -252,6 +285,7 @@ def create_table_command(client, session, args: list):
                     # 转换为API需要的格式：[{"name": "选项名"}]
                     choices = [{"name": opt} for opt in options_list]
                     
+                    # 注意：Teable API 不支持在创建字段时设置 unique 和 notNull
                     field_config = create_field_config(
                         name=field_name,
                         field_type=field_type_raw,  # 使用原始大小写
@@ -259,13 +293,23 @@ def create_table_command(client, session, args: list):
                     )
                 else:
                     # 无选项，使用默认配置
+                    # 注意：Teable API 不支持在创建字段时设置 unique 和 notNull
                     field_config = create_field_config(
                         name=field_name,
                         field_type=field_type_raw  # 使用原始大小写
                     )
                 fields.append(field_config)
-                if len(parts) >= 3:
-                    print(f"  ✓ 字段: {field_name} ({field_type_raw}, 选项: {', '.join(options_list)})")
+                
+                attrs = []
+                if len(parts) >= 3 and parts[2].lower() not in ['unique', 'required']:
+                    attrs.append(f"选项: {', '.join(options_list)}")
+                if is_unique:
+                    attrs.append("唯一")
+                if is_required:
+                    attrs.append("必填")
+                
+                if attrs:
+                    print(f"  ✓ 字段: {field_name} ({field_type_raw}, {', '.join(attrs)})")
                 else:
                     print(f"  ✓ 字段: {field_name} ({field_type_raw})")
             
@@ -278,12 +322,25 @@ def create_table_command(client, session, args: list):
                     return 1
                 
                 # 创建字段配置（使用原始大小写）
+                # 注意：Teable API 不支持在创建字段时设置 unique 和 notNull
+                # 这些属性需要通过 Web 界面手动设置
                 field_config = create_field_config(
                     name=field_name,
                     field_type=field_type_raw
+                    # unique 和 notNull 在创建时会被忽略，所以不传递
                 )
                 fields.append(field_config)
-                print(f"  ✓ 字段: {field_name} ({field_type_raw})")
+                
+                attrs = []
+                if is_unique:
+                    attrs.append("唯一")
+                if is_required:
+                    attrs.append("必填")
+                
+                if attrs:
+                    print(f"  ✓ 字段: {field_name} ({field_type_raw}, {', '.join(attrs)})")
+                else:
+                    print(f"  ✓ 字段: {field_name} ({field_type_raw})")
         
         # 如果没有指定字段，创建默认字段
         if not fields:
