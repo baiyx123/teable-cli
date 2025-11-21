@@ -264,6 +264,9 @@ def show_pipe_mode(client, session, args: list, table_id: str, table_name: str):
         
         # 解析查询条件参数
         for arg in args:
+            # 跳过where关键字
+            if arg.lower() == 'where':
+                continue
             if arg.startswith('limit='):
                 try:
                     limit = int(arg.split('=', 1)[1])
@@ -311,36 +314,79 @@ def show_pipe_mode(client, session, args: list, table_id: str, table_name: str):
         # 构建基础查询参数
         base_query_params = {}
         
-        # 构建过滤条件
+        # 构建过滤条件 - 日期字段需要使用字段ID和特殊操作符
         if where_conditions:
             filter_set = []
+            # 构建字段名到字段信息的映射
+            field_info_map = {f.get('name'): f for f in fields}
+            
             for field, value in where_conditions.items():
+                # 解析字段名和操作符
                 field_name = field
-                operator = "is"
+                operator = None
+                
                 if field.endswith('__gt'):
                     field_name = field.replace('__gt', '')
-                    operator = "isGreater"
+                    operator = 'gt'
                 elif field.endswith('__gte'):
                     field_name = field.replace('__gte', '')
-                    operator = "isGreaterEqual"
+                    operator = 'gte'
                 elif field.endswith('__lt'):
                     field_name = field.replace('__lt', '')
-                    operator = "isLess"
+                    operator = 'lt'
                 elif field.endswith('__lte'):
                     field_name = field.replace('__lte', '')
-                    operator = "isLessEqual"
+                    operator = 'lte'
                 elif field.endswith('__eq'):
                     field_name = field.replace('__eq', '')
-                    operator = "is"
+                    operator = 'eq'
                 elif field.endswith('__like'):
                     field_name = field.replace('__like', '')
-                    operator = "contains"
+                    operator = 'like'
+                else:
+                    operator = 'eq'  # 默认等于
                 
-                filter_set.append({
-                    "fieldId": field_name,
-                    "operator": operator,
-                    "value": value
-                })
+                # 获取字段信息
+                field_info = field_info_map.get(field_name)
+                if not field_info:
+                    logger.warning(f"字段 '{field_name}' 不存在，跳过该条件")
+                    continue
+                
+                field_type = field_info.get('type', '')
+                # 日期字段必须使用字段ID，且操作符需要特殊处理
+                if field_type == 'date':
+                    field_id = field_info.get('id')
+                    # 日期字段的操作符映射
+                    date_operator_map = {
+                        'gt': 'isAfter',
+                        'gte': 'isOnOrAfter',
+                        'lt': 'isBefore',
+                        'lte': 'isOnOrBefore',
+                        'eq': 'is',
+                        'like': 'is'  # 日期字段不支持like，使用is
+                    }
+                    api_operator = date_operator_map.get(operator, 'is')
+                    filter_set.append({
+                        "fieldId": field_id,  # 使用字段ID
+                        "operator": api_operator,
+                        "value": value
+                    })
+                else:
+                    # 非日期字段使用字段名
+                    operator_map = {
+                        'gt': 'isGreater',
+                        'gte': 'isGreaterEqual',
+                        'lt': 'isLess',
+                        'lte': 'isLessEqual',
+                        'eq': 'is',
+                        'like': 'contains'
+                    }
+                    api_operator = operator_map.get(operator, 'is')
+                    filter_set.append({
+                        "fieldId": field_name,  # 使用字段名
+                        "operator": api_operator,
+                        "value": value
+                    })
             
             base_query_params['filter'] = json.dumps({
                 "conjunction": "and",
@@ -434,6 +480,9 @@ def show_table_mode(client, session, args: list, table_id: str, table_name: str)
         
         # 解析查询条件参数 - 支持 key=value 格式
         for arg in args:
+            # 跳过where关键字
+            if arg.lower() == 'where':
+                continue
             # 先处理特殊的系统参数
             if arg.startswith('limit='):
                 try:
@@ -491,59 +540,79 @@ def show_table_mode(client, session, args: list, table_id: str, table_name: str)
             query_params['take'] = limit
             query_params['skip'] = 0  # 从第0条开始
         
-        # 构建过滤条件 - 使用字段名而不是字段ID
+        # 构建过滤条件 - 日期字段需要使用字段ID和特殊操作符
         if where_conditions:
             filter_set = []
+            # 构建字段名到字段信息的映射
+            field_info_map = {f.get('name'): f for f in fields}
+            
             for field, value in where_conditions.items():
-                # 直接使用字段名而不是字段ID
+                # 解析字段名和操作符
                 field_name = field
+                operator = None
+                
                 if field.endswith('__gt'):
                     field_name = field.replace('__gt', '')
-                    filter_set.append({
-                        "fieldId": field_name,
-                        "operator": "isGreater",
-                        "value": value
-                    })
+                    operator = 'gt'
                 elif field.endswith('__gte'):
                     field_name = field.replace('__gte', '')
-                    filter_set.append({
-                        "fieldId": field_name,
-                        "operator": "isGreaterEqual",
-                        "value": value
-                    })
+                    operator = 'gte'
                 elif field.endswith('__lt'):
                     field_name = field.replace('__lt', '')
-                    filter_set.append({
-                        "fieldId": field_name,
-                        "operator": "isLess",
-                        "value": value
-                    })
+                    operator = 'lt'
                 elif field.endswith('__lte'):
                     field_name = field.replace('__lte', '')
-                    filter_set.append({
-                        "fieldId": field_name,
-                        "operator": "isLessEqual",
-                        "value": value
-                    })
+                    operator = 'lte'
                 elif field.endswith('__eq'):
                     field_name = field.replace('__eq', '')
-                    filter_set.append({
-                        "fieldId": field_name,
-                        "operator": "is",  # 精确匹配
-                        "value": value
-                    })
+                    operator = 'eq'
                 elif field.endswith('__like'):
                     field_name = field.replace('__like', '')
+                    operator = 'like'
+                else:
+                    operator = 'eq'  # 默认等于
+                
+                # 获取字段信息
+                field_info = field_info_map.get(field_name)
+                if not field_info:
+                    logger.warning(f"字段 '{field_name}' 不存在，跳过该条件")
+                    continue
+                
+                field_type = field_info.get('type', '')
+                logger.info(f"字段 '{field_name}' 类型: {field_type}, 操作符: {operator}")
+                # 日期字段必须使用字段ID，且操作符需要特殊处理
+                if field_type == 'date':
+                    logger.info(f"检测到日期字段 '{field_name}'，使用字段ID和日期操作符")
+                    field_id = field_info.get('id')
+                    # 日期字段的操作符映射
+                    date_operator_map = {
+                        'gt': 'isAfter',
+                        'gte': 'isOnOrAfter',
+                        'lt': 'isBefore',
+                        'lte': 'isOnOrBefore',
+                        'eq': 'is',
+                        'like': 'is'  # 日期字段不支持like，使用is
+                    }
+                    api_operator = date_operator_map.get(operator, 'is')
                     filter_set.append({
-                        "fieldId": field_name,
-                        "operator": "contains",  # 模糊匹配
+                        "fieldId": field_id,  # 使用字段ID
+                        "operator": api_operator,
                         "value": value
                     })
                 else:
-                    # 默认使用精确匹配
+                    # 非日期字段使用字段名
+                    operator_map = {
+                        'gt': 'isGreater',
+                        'gte': 'isGreaterEqual',
+                        'lt': 'isLess',
+                        'lte': 'isLessEqual',
+                        'eq': 'is',
+                        'like': 'contains'
+                    }
+                    api_operator = operator_map.get(operator, 'is')
                     filter_set.append({
-                        "fieldId": field_name,
-                        "operator": "is",  # 精确匹配
+                        "fieldId": field_name,  # 使用字段名
+                        "operator": api_operator,
                         "value": value
                     })
             
